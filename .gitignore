@@ -1,6 +1,7 @@
 .env
 data/portfolio_state.json
 data/*.json
+data/journal.db
 __pycache__/
 *.pyc
 *.pyo

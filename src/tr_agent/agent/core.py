@@ -1,12 +1,15 @@
 import json
 import logging
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
 
 import ollama
 
 from tr_agent.agent.prompts import SYSTEM_PROMPT
 from tr_agent.broker.base import OrderSide, Portfolio
 from tr_agent.config import settings
+from tr_agent import memory
 from tr_agent.risk import RiskCheck
 from tr_agent.signals.technical import TechnicalAnalysis
 
@@ -25,12 +28,18 @@ def confirm_trade(
     analysis: TechnicalAnalysis,
     risk_check: RiskCheck,
     portfolio: Portfolio,
+    journal_path: Optional[Path] = None,
 ) -> TradeDecision:
-    """Ask the LLM to review the signal and risk check. Returns a final trade decision."""
+    """Ask the LLM to review the signal, risk check and past performance. Returns a final trade decision."""
     positions_summary = {
         t: {"qty": p.quantity, "avg_price": p.avg_price}
         for t, p in portfolio.positions.items()
     }
+
+    memory_context = memory.build_context(
+        analysis.ticker, analysis.signal.value,
+        **({"path": journal_path} if journal_path else {}),
+    )
 
     prompt = f"""Signal: {analysis.signal.upper()} on {analysis.ticker}
 
@@ -48,7 +57,7 @@ Risk check:
 Portfolio:
 - Cash available: ${portfolio.cash:,.2f}
 - Open positions: {positions_summary if positions_summary else "none"}
-
+{f"{chr(10)}{memory_context}" if memory_context else ""}
 Should we execute this {analysis.signal} trade?"""
 
     log.info(f"[LLM] Asking for confirmation on {analysis.ticker} {analysis.signal}...")
