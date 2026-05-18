@@ -1,0 +1,11 @@
+.env
+data/portfolio_state.json
+data/*.json
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+dist/
+*.egg-info/
+.venv/
