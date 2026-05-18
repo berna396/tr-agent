@@ -16,7 +16,7 @@ def test_init_creates_tables(db):
 
 
 def test_log_signal(db):
-    journal.log_signal("AAPL", "buy", 28.0, 0.05, 155.0, 145.0, 150.0, "RSI oversold", db)
+    journal.log_signal("AAPL", "buy", 28.0, 0.05, 155.0, 145.0, 150.0, "RSI oversold", path=db)
     # No error = success; verify via stats after adding an outcome
 
 

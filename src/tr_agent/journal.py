@@ -70,10 +70,13 @@ def _now() -> str:
 
 def log_signal(ticker: str, signal: str, rsi: float, macd_hist: float,
                sma_20: float, sma_50: float, close: float, reasoning: str,
+               ml_features: dict | None = None,
                path: Path = _DB_PATH) -> int:
     data = dict(signal=signal, rsi=round(rsi, 2), macd_hist=round(macd_hist, 4),
                 sma_20=round(sma_20, 2), sma_50=round(sma_50, 2),
                 close=round(close, 4), reasoning=reasoning)
+    if ml_features:
+        data["ml_features"] = {k: round(v, 6) for k, v in ml_features.items()}
     with _conn(path) as con:
         cur = con.execute(
             "INSERT INTO cycle_events(ts, ticker, event_type, data) VALUES(?,?,?,?)",

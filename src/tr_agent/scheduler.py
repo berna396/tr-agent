@@ -5,20 +5,41 @@ import pytz
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from tr_agent import journal, notifier
+from pathlib import Path
+
+from tr_agent import journal, notifier, risk
 from tr_agent.agent import core as llm
 from tr_agent.broker.paper import PaperBroker
 from tr_agent.config import DEFAULT_WATCHLIST, settings
+from tr_agent.ml.auto_improve import daily_ml_check, weekly_analysis
+from tr_agent import screener
 from tr_agent.signals import technical
 from tr_agent.signals.technical import Signal
-from tr_agent import risk
+
+_WATCHLIST_PATH = Path(__file__).parents[2] / "data" / "active_watchlist.json"
 
 log = logging.getLogger(__name__)
 ET = pytz.timezone("America/New_York")
 
 
+def refresh_watchlist(tickers: list[str] | None = None) -> None:
+    """Run the pre-market screener and update active_watchlist.json."""
+    log.info("[Screener] Running pre-market scan...")
+    pool = tickers or None  # None → uses CANDIDATE_POOL
+    selected = screener.screen(pool=pool)
+    screener.save_active_watchlist(selected, _WATCHLIST_PATH)
+    notifier.send(
+        f"*Today's watchlist ({len(selected)} tickers)*\n"
+        + ", ".join(selected)
+    )
+
+
 def run_cycle(tickers: list[str] | None = None) -> None:
-    tickers = tickers or DEFAULT_WATCHLIST
+    # If no explicit override, use the screener's daily selection
+    if tickers is None:
+        tickers = screener.load_active_watchlist(_WATCHLIST_PATH)
+    else:
+        tickers = tickers or DEFAULT_WATCHLIST
     journal.init()
 
     broker = PaperBroker(
@@ -44,6 +65,7 @@ def run_cycle(tickers: list[str] | None = None) -> None:
             rsi=analysis.rsi, macd_hist=analysis.macd_hist,
             sma_20=analysis.sma_20, sma_50=analysis.sma_50,
             close=analysis.close, reasoning=analysis.reasoning,
+            ml_features=analysis.ml_features or None,
         )
         log.info(f"[Cycle] {ticker}: {analysis.signal.upper()} — {analysis.reasoning}")
 
@@ -116,6 +138,14 @@ def start(tickers: list[str] | None = None) -> None:
     scheduler = BlockingScheduler(timezone=ET)
 
     scheduler.add_job(
+        refresh_watchlist,
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=15, timezone=ET),
+        id="screener_daily",
+        name="Pre-market watchlist screener",
+        misfire_grace_time=600,
+    )
+
+    scheduler.add_job(
         run_cycle,
         CronTrigger(
             day_of_week="mon-fri",
@@ -128,6 +158,24 @@ def start(tickers: list[str] | None = None) -> None:
         id="trading_cycle",
         name="Trading cycle",
         misfire_grace_time=300,
+    )
+
+    scheduler.add_job(
+        daily_ml_check,
+        CronTrigger(day_of_week="mon-fri", hour=9, minute=0, timezone=ET),
+        kwargs={"tickers": tickers},
+        id="ml_daily_check",
+        name="ML daily retrain check",
+        misfire_grace_time=600,
+    )
+
+    scheduler.add_job(
+        weekly_analysis,
+        CronTrigger(day_of_week="sun", hour=10, minute=0, timezone=ET),
+        kwargs={"tickers": tickers},
+        id="ml_weekly_analysis",
+        name="ML weekly analysis",
+        misfire_grace_time=3600,
     )
 
     log.info(f"Scheduler started — running every 30 min during NYSE hours (9:30–16:00 ET)")

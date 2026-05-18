@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
 
@@ -26,6 +26,9 @@ class TechnicalAnalysis:
     sma_50: Optional[float]
     signal: Signal
     reasoning: str
+    ml_confidence: Optional[float] = None
+    ml_available: bool = False
+    ml_features: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -40,6 +43,8 @@ class TechnicalAnalysis:
             "sma_50": round(self.sma_50, 4) if self.sma_50 is not None else None,
             "signal": self.signal.value,
             "reasoning": self.reasoning,
+            "ml_confidence": round(self.ml_confidence, 4) if self.ml_confidence is not None else None,
+            "ml_available": self.ml_available,
         }
 
 
@@ -68,6 +73,8 @@ def analyze(ticker: str, timeframe: str = "3mo") -> TechnicalAnalysis:
 
     signal, reasoning = _derive_signal(rsi_val, macd_hist_val, sma_20, sma_50, float(close.iloc[-1]))
 
+    ml_confidence, ml_available, ml_feats = _enrich_with_ml(df)
+
     return TechnicalAnalysis(
         ticker=ticker,
         timeframe=timeframe,
@@ -80,7 +87,29 @@ def analyze(ticker: str, timeframe: str = "3mo") -> TechnicalAnalysis:
         sma_50=sma_50,
         signal=signal,
         reasoning=reasoning,
+        ml_confidence=ml_confidence,
+        ml_available=ml_available,
+        ml_features=ml_feats,
     )
+
+
+def _enrich_with_ml(df) -> tuple[Optional[float], bool, dict]:
+    """Compute ML feature vector and model confidence. Never raises."""
+    try:
+        from pathlib import Path
+        from tr_agent.ml.features import compute_last_row
+        from tr_agent.ml.signal_model import SignalModel
+        from tr_agent.config import settings
+
+        ml_feats = compute_last_row(df)
+        model_path = Path(__file__).parents[3] / "data" / "models" / "signal_model.pkl"
+        model = SignalModel.load(model_path)
+        if model is None:
+            return None, False, ml_feats
+        confidence = model.predict_proba(ml_feats)
+        return confidence, confidence is not None, ml_feats
+    except Exception:
+        return None, False, {}
 
 
 def _derive_signal(

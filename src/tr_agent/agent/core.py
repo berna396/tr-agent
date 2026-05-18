@@ -6,7 +6,7 @@ from typing import Optional
 
 import ollama
 
-from tr_agent.agent.prompts import SYSTEM_PROMPT
+from tr_agent.agent.prompts import SYSTEM_PROMPT, ml_confidence_line
 from tr_agent.broker.base import OrderSide, Portfolio
 from tr_agent.config import settings
 from tr_agent import memory
@@ -49,6 +49,7 @@ Technical indicators:
 - SMA20: {analysis.sma_20:.2f} | SMA50: {analysis.sma_50:.2f}
 - Current price: ${analysis.close:.2f}
 - Analysis: {analysis.reasoning}
+- {ml_confidence_line(analysis.ml_confidence, analysis.ml_available)}
 
 Risk check:
 - Max quantity allowed: {risk_check.max_quantity:.4f} shares

@@ -26,5 +26,14 @@ class Settings(BaseSettings):
     tr_phone: str = Field(default="", repr=False)
     tr_pin: str = Field(default="", repr=False)
 
+    # ML layer
+    ml_min_new_samples: int = 10
+    ml_backtest_period: str = "2y"
+
+    # Pre-market screener
+    screener_top_n: int = 12
+    screener_min_price: float = 10.0
+    screener_min_avg_volume: int = 500_000
+
 
 settings = Settings()

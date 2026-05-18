@@ -16,6 +16,11 @@ dependencies = [
     "apscheduler>=3.10,<4",
     "pytz>=2024",
     "supervisor>=4.2",
+    "lightgbm>=4.0",
+    "scikit-learn>=1.4",
+    "shap>=0.44",
+    "pandas>=2.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
