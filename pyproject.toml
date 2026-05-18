@@ -15,6 +15,7 @@ dependencies = [
     "httpx>=0.27",
     "apscheduler>=3.10,<4",
     "pytz>=2024",
+    "supervisor>=4.2",
 ]
 
 [project.optional-dependencies]

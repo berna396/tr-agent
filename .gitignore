@@ -2,6 +2,10 @@
 data/portfolio_state.json
 data/*.json
 data/journal.db
+data/supervisord.log
+data/supervisord.pid
+data/supervisor.sock
+data/tr-agent.log
 __pycache__/
 *.pyc
 *.pyo
