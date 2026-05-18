@@ -49,6 +49,9 @@ def build_performance_report(db_path: Path, days: int = 30) -> dict:
         rows = con.execute(
             "SELECT * FROM trade_outcomes WHERE sell_ts >= ?", (cutoff,)
         ).fetchall()
+        signal_rows = con.execute(
+            "SELECT ts, ticker, data FROM cycle_events WHERE event_type='signal'"
+        ).fetchall()
 
     if not rows:
         return {"total_trades": 0, "days": days, "message": "no completed trades in window"}
@@ -84,7 +87,80 @@ def build_performance_report(db_path: Path, days: int = 30) -> dict:
         "best_trade_pct": round(best, 2),
         "worst_trade_pct": round(worst, 2),
         "by_ticker": by_ticker,
+        "rsi_entry_quality": _rsi_entry_quality(df, signal_rows),
+        "stop_loss_analysis": _stop_loss_analysis(df),
     }
+
+
+def _rsi_entry_quality(outcomes: pd.DataFrame, signal_rows) -> dict:
+    """
+    Bucket BUY entries by RSI at signal time and compare win rate + avg P&L.
+    Answers: did entries at RSI<30 outperform those at RSI 30-35?
+    """
+    # Index signals by ticker → sorted list of (ts, rsi)
+    sig_by_ticker: dict[str, list[tuple[str, float]]] = {}
+    for row in signal_rows:
+        try:
+            data = json.loads(row["data"])
+            rsi = data.get("rsi")
+            if rsi is not None:
+                sig_by_ticker.setdefault(row["ticker"], []).append((row["ts"], float(rsi)))
+        except Exception:
+            continue
+
+    buckets: dict[str, list[float]] = {"<30": [], "30-35": [], ">=35": []}
+
+    for _, trade in outcomes.iterrows():
+        ticker = trade["ticker"]
+        buy_ts = trade["buy_ts"]
+        sigs = sig_by_ticker.get(ticker, [])
+        pre = [(ts, rsi) for ts, rsi in sigs if ts <= buy_ts]
+        if not pre:
+            continue
+        _, entry_rsi = max(pre, key=lambda x: x[0])
+
+        if entry_rsi < 30:
+            key = "<30"
+        elif entry_rsi < 35:
+            key = "30-35"
+        else:
+            key = ">=35"
+        buckets[key].append(float(trade["pnl_pct"]))
+
+    result = {}
+    for label, pnl_list in buckets.items():
+        if not pnl_list:
+            result[label] = {"trades": 0}
+            continue
+        wins = sum(1 for p in pnl_list if p > 0)
+        result[label] = {
+            "trades": len(pnl_list),
+            "win_rate": round(wins / len(pnl_list) * 100, 1),
+            "avg_pnl_pct": round(float(np.mean(pnl_list)), 2),
+        }
+    return result
+
+
+def _stop_loss_analysis(outcomes: pd.DataFrame) -> dict:
+    """
+    Measure how often the 5% stop-loss floor is triggering vs organic sell signals.
+    Stop-loss exits are identified by sell_reasoning starting with 'stop-loss'.
+    """
+    total = len(outcomes)
+    sl_mask = outcomes["sell_reasoning"].fillna("").str.startswith("stop-loss")
+    sl_count = int(sl_mask.sum())
+    organic_count = total - sl_count
+
+    result: dict = {
+        "total_sells": total,
+        "stop_loss_exits": sl_count,
+        "organic_exits": organic_count,
+        "stop_loss_rate_pct": round(sl_count / total * 100, 1) if total else 0.0,
+    }
+    if sl_count:
+        sl_losses = outcomes.loc[sl_mask, "pnl_pct"]
+        result["avg_stop_loss_pct"] = round(float(sl_losses.mean()), 2)
+    return result
 
 
 def generate_ollama_insights(
@@ -115,6 +191,21 @@ def generate_ollama_insights(
             f"  Training samples: {training_report['n_samples']}\n"
         )
 
+    rsi_quality = report.get("rsi_entry_quality", {})
+    rsi_lines = "\n".join(
+        f"  RSI {bucket}: {d['trades']} trades, {d.get('win_rate', 0)}% win rate, avg {d.get('avg_pnl_pct', 0):+.2f}%"
+        for bucket, d in rsi_quality.items()
+        if d.get("trades", 0) > 0
+    ) or "  Not enough data"
+
+    sl = report.get("stop_loss_analysis", {})
+    sl_line = (
+        f"  Stop-loss exits: {sl.get('stop_loss_exits', 0)}/{sl.get('total_sells', 0)} "
+        f"({sl.get('stop_loss_rate_pct', 0)}%), avg loss {sl.get('avg_stop_loss_pct', 0):+.2f}%"
+        if sl
+        else "  Not available"
+    )
+
     prompt = f"""You are analyzing performance data for an AI paper trading agent. Provide a concise analysis (4-6 sentences).
 
 LAST {report.get('days', 30)} DAYS PERFORMANCE:
@@ -128,10 +219,16 @@ LAST {report.get('days', 30)} DAYS PERFORMANCE:
 BY TICKER:
 {ticker_lines}
 
+RSI ENTRY QUALITY:
+{rsi_lines}
+
+STOP-LOSS ANALYSIS:
+{sl_line}
+
 TOP PREDICTIVE FEATURES (SHAP):
 {shap_lines}
 {model_section}
-Analyze what patterns are working, what signals are most predictive, and suggest one concrete adjustment."""
+Analyze what patterns are working, whether RSI entry thresholds are well-calibrated, whether the stop-loss is triggering too aggressively, and suggest one concrete parameter adjustment."""
 
     try:
         response = ollama.chat(
@@ -166,6 +263,24 @@ def format_telegram_message(
             f"\n*Model Updated* → v{training_report['version']}\n"
             f"CV AUC: {training_report['cv_auc']:.3f} | "
             f"Samples: {training_report['n_samples']}"
+        )
+
+    rsi_quality = report.get("rsi_entry_quality", {})
+    if any(d.get("trades", 0) > 0 for d in rsi_quality.values()):
+        rsi_parts = []
+        for bucket, d in rsi_quality.items():
+            if d.get("trades", 0) > 0:
+                rsi_parts.append(
+                    f"RSI {bucket}: {d['trades']}t, {d.get('win_rate', 0)}% WR, {d.get('avg_pnl_pct', 0):+.2f}%"
+                )
+        lines.append(f"\n*RSI Entry Quality*\n" + " | ".join(rsi_parts))
+
+    sl = report.get("stop_loss_analysis", {})
+    if sl and sl.get("total_sells", 0) > 0:
+        avg_str = f", avg {sl['avg_stop_loss_pct']:+.2f}%" if "avg_stop_loss_pct" in sl else ""
+        lines.append(
+            f"\n*Stop-Loss*: {sl['stop_loss_exits']}/{sl['total_sells']} exits "
+            f"({sl['stop_loss_rate_pct']}%{avg_str})"
         )
 
     if insights:
