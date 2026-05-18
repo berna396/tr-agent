@@ -2,7 +2,7 @@
 
 A local AI trading agent that runs entirely on your machine. It scans 48 liquid large-caps every morning, selects the best setups, and paper-trades them throughout the day using a 4-stage pipeline: technical signals → risk check → LLM confirmation → order execution. A LightGBM model runs in the background, learning from every trade and improving its confidence scores over time.
 
-**Status:** v0.3 — paper trading live, ML layer active, dynamic screener running.
+**Status:** v0.5 — paper trading live, ML layer active, dynamic screener running, regime filter + earnings blackout + stop-loss active.
 
 ---
 
@@ -22,9 +22,14 @@ Every trading day the agent runs three types of jobs:
               └── 30-day P&L report + SHAP feature analysis → Ollama generates narrative → Telegram
 ```
 
-### 4-stage trading pipeline
+### Trading pipeline
 
 ```
+Stage 0 — Stop-loss enforcement  (runs before everything else)
+  ├── Check every open position against current price
+  ├── If loss ≥ stop_loss_pct (default 5%) → sell immediately, bypass pipeline
+  └── Telegram alert · Skip that ticker for the rest of the cycle
+
 Stage 1 — Signal detection  (pure Python, no LLM)
   ├── Fetch 3 months of daily OHLCV (yfinance)
   ├── Compute RSI(14), MACD(12/26/9), SMA(20/50)
@@ -32,13 +37,17 @@ Stage 1 — Signal detection  (pure Python, no LLM)
   ├── Query LightGBM → ml_confidence (0–1, probability of profitable outcome)
   └── Fire BUY/SELL when ≥2 of 3 indicators align · NEUTRAL → stop
 
+Stage 1b — BUY guards  (applied before risk check, BUY signals only)
+  ├── Market regime filter: SPY SMA20 < SMA50 → suppress BUY (bearish market)
+  └── Earnings blackout: earnings within 3 days → suppress BUY (yfinance calendar)
+
 Stage 2 — Risk check  (pure Python, no LLM)
   ├── Max 20% of cash per single trade
   ├── Max 60% of portfolio invested at once
   └── SELL requires open position · Rejected → Telegram alert
 
 Stage 3 — LLM confirmation  (Ollama · qwen2.5:7b)
-  ├── Receives: signal + all indicators + ML confidence + portfolio state + trade history
+  ├── Receives: signal + indicators + ML confidence + market regime + portfolio state + trade history
   ├── Returns JSON: {confirmed, quantity, reasoning}
   └── Conservative by design — rejects anything ambiguous
 
@@ -161,6 +170,11 @@ ML_BACKTEST_PERIOD=2y
 SCREENER_TOP_N=12
 SCREENER_MIN_PRICE=10.0
 SCREENER_MIN_AVG_VOLUME=500000
+
+# v0.5 safety guards
+STOP_LOSS_PCT=0.05          # 5% drawdown triggers auto-close (set to 0 to disable)
+EARNINGS_BLACKOUT_DAYS=3    # suppress BUY within N days of earnings (set to 0 to disable)
+REGIME_FILTER_ENABLED=true  # suppress BUY when SPY SMA20 < SMA50
 ```
 
 ### First run
@@ -266,6 +280,8 @@ src/tr_agent/
 ├── main.py              CLI entry point (trade, scheduler, portfolio, screen, ml)
 ├── scheduler.py         APScheduler orchestration + refresh_watchlist + run_cycle
 ├── screener.py          Pre-market screener: score and rank candidate pool
+├── market_regime.py     SPY SMA20/SMA50 regime detection (bullish/bearish)
+├── guards.py            Earnings blackout check via yfinance calendar
 ├── config.py            Pydantic settings from .env
 ├── journal.py           SQLite trade journal (read/write all events)
 ├── memory.py            Build LLM context from historical trade outcomes
@@ -275,8 +291,8 @@ src/tr_agent/
 │   ├── technical.py     Technical analysis: fetch OHLCV, compute indicators, derive signal
 │   └── rules.py         Rule engine (for backtesting/reference)
 ├── agent/
-│   ├── core.py          LLM confirmation via Ollama
-│   └── prompts.py       System prompt + ML confidence line builder
+│   ├── core.py          LLM confirmation via Ollama (includes regime context)
+│   └── prompts.py       System prompt + ML confidence + regime line builders
 ├── broker/
 │   ├── paper.py         Paper broker: simulate orders with slippage
 │   └── trade_republic.py  Stub for live trading (v0.4)
@@ -294,19 +310,19 @@ src/tr_agent/
 
 ---
 
-## Next steps
+## Roadmap
+
+### ✅ v0.5 — Smarter signals (done)
+- Market regime filter: SPY SMA20 < SMA50 suppresses BUY system-wide
+- Earnings blackout: avoids BUY entries within 3 days of earnings
+- Stop-loss: Stage 0 auto-closes positions that drop ≥5% from entry
+- Market regime injected into LLM prompt as additional context
 
 ### v0.4 — Live trading (Trade Republic)
 - Wire up `broker/trade_republic.py` using the `pytr` library
 - Toggle via `PAPER_MODE=false` in `.env`
 - Add fractional share handling and order confirmation flow
 - Risk: start with very small position sizes
-
-### v0.5 — Smarter signals
-- **Market regime filter**: if SPY/QQQ is in a downtrend (SMA20 < SMA50), suppress BUY signals system-wide
-- **Earnings blackout**: avoid entering positions within 3 days of earnings (fetch calendar from yfinance)
-- **Sector rotation**: track which sectors have the most buy signals as a confirmation signal
-- **Stop-loss tracking**: close positions that drop X% from entry price regardless of sell signal
 
 ### v0.6 — Better ML
 - The current LightGBM model improves automatically as live trade outcomes accumulate — just keep trading
