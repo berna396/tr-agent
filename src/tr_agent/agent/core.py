@@ -6,7 +6,7 @@ from typing import Optional
 
 import ollama
 
-from tr_agent.agent.prompts import SYSTEM_PROMPT, ml_confidence_line
+from tr_agent.agent.prompts import SYSTEM_PROMPT, ml_confidence_line, regime_line
 from tr_agent.broker.base import OrderSide, Portfolio
 from tr_agent.config import settings
 from tr_agent import memory
@@ -29,6 +29,7 @@ def confirm_trade(
     risk_check: RiskCheck,
     portfolio: Portfolio,
     journal_path: Optional[Path] = None,
+    regime=None,
 ) -> TradeDecision:
     """Ask the LLM to review the signal, risk check and past performance. Returns a final trade decision."""
     positions_summary = {
@@ -50,6 +51,7 @@ Technical indicators:
 - Current price: ${analysis.close:.2f}
 - Analysis: {analysis.reasoning}
 - {ml_confidence_line(analysis.ml_confidence, analysis.ml_available)}
+- {regime_line(regime)}
 
 Risk check:
 - Max quantity allowed: {risk_check.max_quantity:.4f} shares

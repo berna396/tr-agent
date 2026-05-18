@@ -35,5 +35,10 @@ class Settings(BaseSettings):
     screener_min_price: float = 10.0
     screener_min_avg_volume: int = 500_000
 
+    # v0.5 safety guards
+    stop_loss_pct: float = 0.05          # 5% — set to 0 to disable
+    earnings_blackout_days: int = 3      # avoid BUY within N days of earnings
+    regime_filter_enabled: bool = True   # suppress BUY when SPY is bearish
+
 
 settings = Settings()

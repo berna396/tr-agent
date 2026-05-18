@@ -12,6 +12,17 @@ Respond ONLY in valid JSON with this exact structure:
 {"confirmed": true/false, "quantity": <float or 0 if rejected>, "reasoning": "<one sentence>"}"""
 
 
+def regime_line(regime) -> str:
+    if regime is None:
+        return "Market regime: unknown"
+    if regime.bullish:
+        return f"Market regime: {regime.label} ({regime.source} SMA20={regime.sma20:.0f} > SMA50={regime.sma50:.0f})"
+    return (
+        f"Market regime: {regime.label} ({regime.source} SMA20={regime.sma20:.0f} < SMA50={regime.sma50:.0f})"
+        " — be extra cautious on BUY signals"
+    )
+
+
 def ml_confidence_line(ml_confidence: float | None, ml_available: bool, n_samples: int = 0) -> str:
     if not ml_available or ml_confidence is None:
         return "ML model: bootstrapping — run 'tr-agent ml bootstrap' to train"
