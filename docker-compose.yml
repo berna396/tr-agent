@@ -1,0 +1,20 @@
+services:
+  tr-agent:
+    build: .
+    container_name: tr-agent
+    restart: unless-stopped
+
+    # Share host network so the container can reach Ollama at localhost:11434
+    network_mode: host
+
+    env_file: .env
+
+    volumes:
+      # Persist portfolio state and trade journal across restarts
+      - ./data:/app/data
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
