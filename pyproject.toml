@@ -1,12 +1,10 @@
 [project]
 name = "tr-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local AI trading agent with Ollama + Trade Republic"
 requires-python = ">=3.12"
 dependencies = [
-    "langchain>=0.3",
-    "langchain-ollama>=0.2",
-    "langchain-community>=0.3",
+    "ollama>=0.4",
     "yfinance>=0.2",
     "ta>=0.11",
     "pydantic>=2.0",
@@ -15,6 +13,8 @@ dependencies = [
     "rich>=13.0",
     "pytr>=0.1",
     "httpx>=0.27",
+    "apscheduler>=3.10,<4",
+    "pytz>=2024",
 ]
 
 [project.optional-dependencies]

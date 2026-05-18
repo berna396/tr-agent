@@ -1,6 +1,8 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+DEFAULT_WATCHLIST = ["AAPL", "MSFT", "META", "TSLA", "NVDA"]
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
@@ -12,7 +14,15 @@ class Settings(BaseSettings):
     paper_initial_capital: float = 10_000.0
     paper_slippage: float = 0.001  # 0.1%
 
-    # Trade Republic (iteración 2)
+    # Risk manager
+    max_trade_pct: float = 0.20       # max 20% of cash per trade
+    max_invested_pct: float = 0.60    # max 60% of portfolio invested
+
+    # Telegram notifications
+    telegram_token: str = Field(default="", repr=False)
+    telegram_chat_id: str = Field(default="", repr=False)
+
+    # Trade Republic (iteration 2)
     tr_phone: str = Field(default="", repr=False)
     tr_pin: str = Field(default="", repr=False)
 

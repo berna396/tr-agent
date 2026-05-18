@@ -1,0 +1,17 @@
+[Unit]
+Description=tr-agent local trading bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=adrian
+WorkingDirectory=/home/adrian/Proyectos/tr-agent
+ExecStart=/home/adrian/Proyectos/tr-agent/.venv/bin/python -m tr_agent.main scheduler
+Restart=always
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
