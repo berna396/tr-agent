@@ -16,9 +16,9 @@ def regime_line(regime) -> str:
     if regime is None:
         return "Market regime: unknown"
     if regime.bullish:
-        return f"Market regime: {regime.label} ({regime.source} SMA20={regime.sma20:.0f} > SMA50={regime.sma50:.0f})"
+        return f"Market regime: {regime.label} ({regime.source} SMA50={regime.sma50:.0f} > SMA200={regime.sma200:.0f} — golden cross)"
     return (
-        f"Market regime: {regime.label} ({regime.source} SMA20={regime.sma20:.0f} < SMA50={regime.sma50:.0f})"
+        f"Market regime: {regime.label} ({regime.source} SMA50={regime.sma50:.0f} < SMA200={regime.sma200:.0f} — death cross)"
         " — be extra cautious on BUY signals"
     )
 

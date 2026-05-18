@@ -2,7 +2,7 @@
 
 A local AI trading agent that runs entirely on your machine. It scans 48 liquid large-caps every morning, selects the best setups, and paper-trades them throughout the day using a 4-stage pipeline: technical signals → risk check → LLM confirmation → order execution. A LightGBM model runs in the background, learning from every trade and improving its confidence scores over time.
 
-**Status:** v0.5 — paper trading live, ML layer active, dynamic screener running, regime filter + earnings blackout + stop-loss active.
+**Status:** v0.6 — paper trading live, ML layer active (16 features, hyperparameter tuning, SPY correlation), regime filter + earnings blackout + stop-loss active.
 
 ---
 
@@ -31,15 +31,15 @@ Stage 0 — Stop-loss enforcement  (runs before everything else)
   └── Telegram alert · Skip that ticker for the rest of the cycle
 
 Stage 1 — Signal detection  (pure Python, no LLM)
-  ├── Fetch 3 months of daily OHLCV (yfinance)
-  ├── Compute RSI(14), MACD(12/26/9), SMA(20/50)
-  ├── Compute 14 ML features: ATR, Bollinger Bands, ROC, ADX, volume ratio, ...
+  ├── Fetch 1 year of daily OHLCV (yfinance)
+  ├── Compute RSI(14), MACD(12/26/9), SMA(20/50/200)
+  ├── Compute 16 ML features: ATR, Bollinger Bands, ROC, ADX, volume ratio, SPY correlation, ...
   ├── Query LightGBM → ml_confidence (0–1, probability of profitable outcome)
-  └── Fire BUY/SELL when ≥2 of 3 indicators align · NEUTRAL → stop
+  └── Fire BUY when ≥2 of {RSI<30, MACD hist>0, SMA20>SMA50} · SELL symmetric · else NEUTRAL
 
 Stage 1b — BUY guards  (applied before risk check, BUY signals only)
-  ├── Market regime filter: SPY SMA20 < SMA50 → suppress BUY (bearish market)
-  └── Earnings blackout: earnings within 3 days → suppress BUY (yfinance calendar)
+  ├── Market regime filter: SPY SMA50 < SMA200 (death cross) → suppress BUY
+  └── Earnings blackout: earnings within 3 days → suppress BUY · fails closed on API error
 
 Stage 2 — Risk check  (pure Python, no LLM)
   ├── Max 20% of cash per single trade
@@ -47,7 +47,7 @@ Stage 2 — Risk check  (pure Python, no LLM)
   └── SELL requires open position · Rejected → Telegram alert
 
 Stage 3 — LLM confirmation  (Ollama · qwen2.5:7b)
-  ├── Receives: signal + indicators + ML confidence + market regime + portfolio state + trade history
+  ├── Receives: signal + indicators (incl. SMA200) + ML confidence + market regime + portfolio state + trade history
   ├── Returns JSON: {confirmed, quantity, reasoning}
   └── Conservative by design — rejects anything ambiguous
 
@@ -66,7 +66,7 @@ The ML layer runs alongside the pipeline and improves automatically.
 
 **Model:** LightGBM binary classifier — predicts whether the current market conditions will produce a profitable trade.
 
-**14 features per signal:**
+**16 features per signal:**
 
 | Category | Features |
 |---|---|
@@ -75,8 +75,11 @@ The ML layer runs alongside the pipeline and improves automatically.
 | Volatility | ATR(14)/price, Bollinger Band position, Bollinger Band width |
 | Volume | Volume / 20-day average volume |
 | Time | Day of week |
+| Market-relative | `rel_roc_5` (ticker ROC5 − SPY ROC5), `spy_corr_60` (60-day return correlation with SPY) |
 
-**Training data:** Bootstrapped from 2 years of historical data (501 labeled samples across all 5 original tickers). As paper trades close, the model retrains on real P&L outcomes — the labels get cleaner and AUC improves over time.
+**Training:** Bootstrapped from 2 years of historical data (~480 labeled samples). Hyperparameters tuned via `GridSearchCV + TimeSeriesSplit` on every training run. As paper trades close, the model retrains on real P&L outcomes automatically.
+
+**Deployment gate:** CV AUC must exceed 0.40 (model must show some discrimination vs random). Current model: v2, AUC 0.453, tuned params `n_estimators=100, learning_rate=0.01`.
 
 **Deployment:** ML confidence is injected into the LLM prompt as context:
 - `> 60%` → "supports trade"
@@ -174,7 +177,7 @@ SCREENER_MIN_AVG_VOLUME=500000
 # v0.5 safety guards
 STOP_LOSS_PCT=0.05          # 5% drawdown triggers auto-close (set to 0 to disable)
 EARNINGS_BLACKOUT_DAYS=3    # suppress BUY within N days of earnings (set to 0 to disable)
-REGIME_FILTER_ENABLED=true  # suppress BUY when SPY SMA20 < SMA50
+REGIME_FILTER_ENABLED=true  # suppress BUY when SPY SMA50 < SMA200 (death cross)
 ```
 
 ### First run
@@ -280,8 +283,8 @@ src/tr_agent/
 ├── main.py              CLI entry point (trade, scheduler, portfolio, screen, ml)
 ├── scheduler.py         APScheduler orchestration + refresh_watchlist + run_cycle
 ├── screener.py          Pre-market screener: score and rank candidate pool
-├── market_regime.py     SPY SMA20/SMA50 regime detection (bullish/bearish)
-├── guards.py            Earnings blackout check via yfinance calendar
+├── market_regime.py     SPY SMA50/SMA200 golden/death cross regime detection
+├── guards.py            Earnings blackout check (fail-closed on API error)
 ├── config.py            Pydantic settings from .env
 ├── journal.py           SQLite trade journal (read/write all events)
 ├── memory.py            Build LLM context from historical trade outcomes
@@ -300,7 +303,7 @@ src/tr_agent/
 │   ├── tracker.py       In-memory portfolio state
 │   └── persistence.py   Load/save portfolio_state.json
 └── ml/
-    ├── features.py      14-feature engineering from OHLCV DataFrame
+    ├── features.py      16-feature engineering from OHLCV + SPY DataFrame
     ├── dataset.py       Historical bootstrap + live data from journal
     ├── signal_model.py  LightGBM wrapper (train, predict, save, load)
     ├── trainer.py       Walk-forward CV, deploy gate, training history
@@ -313,10 +316,20 @@ src/tr_agent/
 ## Roadmap
 
 ### ✅ v0.5 — Smarter signals (done)
-- Market regime filter: SPY SMA20 < SMA50 suppresses BUY system-wide
-- Earnings blackout: avoids BUY entries within 3 days of earnings
+- RSI thresholds tightened: BUY < 30 (was 35), SELL > 70 (was 65)
+- Market regime filter: SPY SMA50 < SMA200 (golden/death cross, upgraded from SMA20/SMA50)
+- Earnings blackout: avoids BUY within 3 days of earnings; fails closed on API error
+- SMA200 added to signal analysis and injected into LLM prompt
 - Stop-loss: Stage 0 auto-closes positions that drop ≥5% from entry
-- Market regime injected into LLM prompt as additional context
+- Screener: returns empty watchlist on quiet days instead of picking neutral noise
+
+### ✅ v0.6 — Better ML (done)
+- 16-feature vector: added `rel_roc_5` (excess return vs SPY) and `spy_corr_60` (60-day correlation with SPY)
+- SPY data downloaded once per day and shared across all ticker feature computations (cached)
+- Hyperparameter tuning: `GridSearchCV + TimeSeriesSplit` runs on every training call; best params stored in training history
+- Label consistency fix: `_is_buy_signal()` threshold aligned with live signal (RSI < 30)
+- Walk-forward CV now reports precision and recall alongside AUC
+- Model v2: AUC 0.453, tuned params `n_estimators=100, learning_rate=0.01`
 
 ### v0.4 — Live trading (Trade Republic)
 - Wire up `broker/trade_republic.py` using the `pytr` library
@@ -324,13 +337,12 @@ src/tr_agent/
 - Add fractional share handling and order confirmation flow
 - Risk: start with very small position sizes
 
-### v0.6 — Better ML
-- The current LightGBM model improves automatically as live trade outcomes accumulate — just keep trading
-- Once 200+ real P&L-labeled trades exist, retrain with a longer lookback and tune hyperparameters
-- Add inter-ticker correlation features (e.g., NVDA vs. AMD signal alignment)
-- Experiment with a small LSTM on sequences of signals (needs ~500+ trades)
-
 ### v0.7 — Observability
 - Web dashboard (FastAPI + htmx) showing live portfolio, recent signals, model performance
 - Backtesting CLI: replay journal signals against historical prices to measure strategy performance
 - Alert on model degradation (AUC drops below baseline over rolling 30-day window)
+
+### v0.8 — Advanced ML (needs 200+ closed trades)
+- Retrain with longer lookback and tuned hyperparameters on real P&L-labeled data
+- LSTM on sequences of signals (needs ~500+ trades)
+- RSI entry quality analysis: did buys at RSI < 30 outperform 30–35 entries?

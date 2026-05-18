@@ -8,10 +8,34 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 from lightgbm import LGBMClassifier
+from sklearn.model_selection import GridSearchCV, TimeSeriesSplit
 
 from tr_agent.ml.features import FEATURE_NAMES
 
 log = logging.getLogger(__name__)
+
+_DEFAULT_PARAMS = {"n_estimators": 200, "num_leaves": 31, "learning_rate": 0.05}
+_TUNE_MIN_SAMPLES = 200
+
+
+def tune_hyperparams(X: pd.DataFrame, y: pd.Series) -> dict:
+    """Grid-search best LightGBM params using time-series CV. Returns defaults if too few samples."""
+    if len(X) < _TUNE_MIN_SAMPLES:
+        log.info(f"[ML] Skipping hyperparameter tuning — {len(X)} samples (need {_TUNE_MIN_SAMPLES}+)")
+        return _DEFAULT_PARAMS.copy()
+
+    param_grid = {
+        "n_estimators": [100, 200, 300],
+        "num_leaves": [15, 31, 63],
+        "learning_rate": [0.01, 0.05, 0.1],
+    }
+    base = LGBMClassifier(class_weight="balanced", random_state=42, verbose=-1)
+    cv = TimeSeriesSplit(n_splits=3)
+    gs = GridSearchCV(base, param_grid, cv=cv, scoring="roc_auc", n_jobs=-1)
+    gs.fit(X[FEATURE_NAMES], y)
+    best = {k: gs.best_params_[k] for k in param_grid}
+    log.info(f"[ML] Tuned params: {best} (CV AUC={gs.best_score_:.3f})")
+    return best
 
 
 class SignalModel:
@@ -22,11 +46,12 @@ class SignalModel:
         self.train_date: Optional[str] = None
         self.n_samples: int = 0
 
-    def train(self, X: pd.DataFrame, y: pd.Series) -> None:
+    def train(self, X: pd.DataFrame, y: pd.Series, params: Optional[dict] = None) -> None:
+        p = params or {}
         self.model = LGBMClassifier(
-            n_estimators=200,
-            learning_rate=0.05,
-            num_leaves=31,
+            n_estimators=p.get("n_estimators", 200),
+            learning_rate=p.get("learning_rate", 0.05),
+            num_leaves=p.get("num_leaves", 31),
             class_weight="balanced",
             random_state=42,
             verbose=-1,

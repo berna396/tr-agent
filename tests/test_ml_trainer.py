@@ -28,6 +28,8 @@ def test_walk_forward_returns_auc():
     result = walk_forward_evaluate(X, y, n_splits=3)
     assert "auc" in result
     assert 0.0 <= result["auc"] <= 1.0
+    assert "avg_precision" in result
+    assert "avg_recall" in result
 
 
 def test_walk_forward_insufficient_data():

@@ -1,3 +1,4 @@
+import datetime as dt
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
 
@@ -55,9 +56,17 @@ def test_returns_false_when_empty_dates():
         assert is_earnings_blackout("AAPL") is False
 
 
-def test_returns_false_on_exception():
+def test_returns_true_on_exception():
     with patch("yfinance.Ticker", side_effect=RuntimeError("network error")):
-        assert is_earnings_blackout("AAPL") is False
+        assert is_earnings_blackout("AAPL") is True
+
+
+def test_handles_plain_date_objects():
+    """yfinance sometimes returns datetime.date instead of datetime/Timestamp."""
+    tomorrow = (datetime.now(timezone.utc) + timedelta(days=1)).date()
+    with patch("yfinance.Ticker") as mock_ticker:
+        mock_ticker.return_value.calendar = {"Earnings Date": [tomorrow]}
+        assert is_earnings_blackout("AAPL", days_before=3) is True
 
 
 def test_returns_false_when_earnings_just_outside_window():

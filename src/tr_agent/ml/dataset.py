@@ -18,7 +18,7 @@ _LABEL_THRESHOLD = 0.005  # 0.5% minimum move to avoid noisy neutral zone
 def _is_buy_signal(rsi: float, macd_hist: float, sma_ratio: float) -> bool:
     """Mirror the 2-of-3 rule from technical.py using feature values."""
     hits = 0
-    if rsi < 35:
+    if rsi < 30:
         hits += 1
     if macd_hist > 0:
         hits += 1
@@ -31,6 +31,17 @@ def build_historical_dataset(
     tickers: list[str], period: str = "2y"
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Download OHLCV history, compute features, label by 5-day forward return."""
+    # Download SPY once for correlation features shared across all tickers
+    spy_df = None
+    try:
+        spy_df = yf.download("SPY", period=period, interval="1d", progress=False, auto_adjust=True)
+        if spy_df.empty:
+            spy_df = None
+        else:
+            log.info(f"[ML] SPY downloaded for correlation features ({len(spy_df)} rows)")
+    except Exception as e:
+        log.warning(f"[ML] Could not download SPY for correlation features: {e}")
+
     all_X, all_y = [], []
 
     for ticker in tickers:
@@ -43,7 +54,7 @@ def build_historical_dataset(
                 log.warning(f"[ML] Skipping {ticker} — insufficient data ({len(df)} rows)")
                 continue
 
-            feat_df = compute_all_rows(df)
+            feat_df = compute_all_rows(df, spy_df=spy_df)
             close = df["Close"].squeeze().reindex(feat_df.index)
             forward_return = close.shift(-_FORWARD_DAYS) / close - 1
 

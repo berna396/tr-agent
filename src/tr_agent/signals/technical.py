@@ -1,10 +1,14 @@
 from dataclasses import dataclass, field
+from datetime import date
 from enum import Enum
 from typing import Optional
 
+import pandas as pd
 import yfinance as yf
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, SMAIndicator
+
+_SPY_CACHE: dict = {}  # keyed by date string; refreshes automatically each new day
 
 
 class Signal(str, Enum):
@@ -29,6 +33,7 @@ class TechnicalAnalysis:
     ml_confidence: Optional[float] = None
     ml_available: bool = False
     ml_features: dict = field(default_factory=dict)
+    sma_200: Optional[float] = None
 
     def to_dict(self) -> dict:
         return {
@@ -41,6 +46,7 @@ class TechnicalAnalysis:
             "macd_hist": round(self.macd_hist, 4) if self.macd_hist is not None else None,
             "sma_20": round(self.sma_20, 4) if self.sma_20 is not None else None,
             "sma_50": round(self.sma_50, 4) if self.sma_50 is not None else None,
+            "sma_200": round(self.sma_200, 4) if self.sma_200 is not None else None,
             "signal": self.signal.value,
             "reasoning": self.reasoning,
             "ml_confidence": round(self.ml_confidence, 4) if self.ml_confidence is not None else None,
@@ -48,7 +54,7 @@ class TechnicalAnalysis:
         }
 
 
-def analyze(ticker: str, timeframe: str = "3mo") -> TechnicalAnalysis:
+def analyze(ticker: str, timeframe: str = "1y") -> TechnicalAnalysis:
     """
     Descarga histórico diario de `ticker` (vía yfinance) y calcula RSI, MACD y SMAs.
 
@@ -71,6 +77,9 @@ def analyze(ticker: str, timeframe: str = "3mo") -> TechnicalAnalysis:
     sma_20 = float(SMAIndicator(close=close, window=20).sma_indicator().iloc[-1])
     sma_50 = float(SMAIndicator(close=close, window=50).sma_indicator().iloc[-1])
 
+    sma_200_series = SMAIndicator(close=close, window=200).sma_indicator()
+    sma_200_val = None if pd.isna(sma_200_series.iloc[-1]) else float(sma_200_series.iloc[-1])
+
     signal, reasoning = _derive_signal(rsi_val, macd_hist_val, sma_20, sma_50, float(close.iloc[-1]))
 
     ml_confidence, ml_available, ml_feats = _enrich_with_ml(df)
@@ -85,12 +94,27 @@ def analyze(ticker: str, timeframe: str = "3mo") -> TechnicalAnalysis:
         macd_hist=macd_hist_val,
         sma_20=sma_20,
         sma_50=sma_50,
+        sma_200=sma_200_val,
         signal=signal,
         reasoning=reasoning,
         ml_confidence=ml_confidence,
         ml_available=ml_available,
         ml_features=ml_feats,
     )
+
+
+def _get_spy_df() -> Optional[pd.DataFrame]:
+    """Return today's SPY OHLCV, fetching once and caching for the rest of the day."""
+    today = date.today().isoformat()
+    if today not in _SPY_CACHE:
+        try:
+            spy = yf.download("SPY", period="1y", interval="1d", progress=False, auto_adjust=True)
+            if not spy.empty:
+                _SPY_CACHE.clear()
+                _SPY_CACHE[today] = spy
+        except Exception:
+            pass
+    return _SPY_CACHE.get(today)
 
 
 def _enrich_with_ml(df) -> tuple[Optional[float], bool, dict]:
@@ -101,7 +125,8 @@ def _enrich_with_ml(df) -> tuple[Optional[float], bool, dict]:
         from tr_agent.ml.signal_model import SignalModel
         from tr_agent.config import settings
 
-        ml_feats = compute_last_row(df)
+        spy_df = _get_spy_df()
+        ml_feats = compute_last_row(df, spy_df=spy_df)
         model_path = Path(__file__).parents[3] / "data" / "models" / "signal_model.pkl"
         model = SignalModel.load(model_path)
         if model is None:
@@ -124,10 +149,10 @@ def _derive_signal(
     sell_conditions = []
 
     if rsi is not None:
-        if rsi < 35:
-            buy_conditions.append(f"RSI={rsi:.1f} sobrevendido (<35)")
-        elif rsi > 65:
-            sell_conditions.append(f"RSI={rsi:.1f} sobrecomprado (>65)")
+        if rsi < 30:
+            buy_conditions.append(f"RSI={rsi:.1f} sobrevendido (<30)")
+        elif rsi > 70:
+            sell_conditions.append(f"RSI={rsi:.1f} sobrecomprado (>70)")
 
     if macd_hist is not None:
         if macd_hist > 0:

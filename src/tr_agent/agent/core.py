@@ -42,13 +42,20 @@ def confirm_trade(
         **({"path": journal_path} if journal_path else {}),
     )
 
+    sma200_str = f" | SMA200: {analysis.sma_200:.2f}" if analysis.sma_200 is not None else ""
+    if analysis.sma_200 is not None:
+        lt_trend = "above" if analysis.close > analysis.sma_200 else "below"
+        sma200_context = f"\n- Long-term trend: price is {lt_trend} SMA200 (${analysis.sma_200:.2f})"
+    else:
+        sma200_context = ""
+
     prompt = f"""Signal: {analysis.signal.upper()} on {analysis.ticker}
 
 Technical indicators:
 - RSI(14): {analysis.rsi:.1f}
 - MACD histogram: {analysis.macd_hist:.4f}
-- SMA20: {analysis.sma_20:.2f} | SMA50: {analysis.sma_50:.2f}
-- Current price: ${analysis.close:.2f}
+- SMA20: {analysis.sma_20:.2f} | SMA50: {analysis.sma_50:.2f}{sma200_str}
+- Current price: ${analysis.close:.2f}{sma200_context}
 - Analysis: {analysis.reasoning}
 - {ml_confidence_line(analysis.ml_confidence, analysis.ml_available)}
 - {regime_line(regime)}

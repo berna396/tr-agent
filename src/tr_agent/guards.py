@@ -1,4 +1,5 @@
 import logging
+from datetime import date as date_type
 from datetime import datetime, timezone
 
 import yfinance as yf
@@ -30,6 +31,9 @@ def is_earnings_blackout(ticker: str, days_before: int = 3, days_after: int = 1)
             # Normalize pandas Timestamp → datetime
             if hasattr(date, "to_pydatetime"):
                 date = date.to_pydatetime()
+            # Normalize plain date → midnight UTC datetime
+            if isinstance(date, date_type) and not isinstance(date, datetime):
+                date = datetime(date.year, date.month, date.day, tzinfo=timezone.utc)
             if hasattr(date, "tzinfo") and date.tzinfo is None:
                 date = date.replace(tzinfo=timezone.utc)
 
@@ -41,5 +45,5 @@ def is_earnings_blackout(ticker: str, days_before: int = 3, days_after: int = 1)
         return False
 
     except Exception as e:
-        log.debug(f"[Guards] Could not check earnings for {ticker}: {e}")
-        return False
+        log.warning(f"[Guards] Could not check earnings for {ticker}: {e} — blocking trade (fail-closed)")
+        return True

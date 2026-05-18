@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from tr_agent.ml.features import FEATURE_NAMES
-from tr_agent.ml.signal_model import SignalModel
+from tr_agent.ml.signal_model import SignalModel, tune_hyperparams, _TUNE_MIN_SAMPLES, _DEFAULT_PARAMS
 
 
 def _make_dataset(n: int = 100) -> tuple[pd.DataFrame, pd.Series]:
@@ -83,6 +83,27 @@ def test_versioned_copies_created(tmp_path):
     path = tmp_path / "signal_model.pkl"
     model.save(path, version=3)
     assert (tmp_path / "signal_model_v3.pkl").exists()
+
+
+def test_tune_hyperparams_returns_defaults_on_small_dataset():
+    X, y = _make_dataset(n=_TUNE_MIN_SAMPLES - 1)
+    result = tune_hyperparams(X, y)
+    assert result == _DEFAULT_PARAMS
+
+
+def test_tune_hyperparams_returns_dict_on_large_dataset():
+    X, y = _make_dataset(n=_TUNE_MIN_SAMPLES + 50)
+    result = tune_hyperparams(X, y)
+    assert isinstance(result, dict)
+    assert set(result.keys()) == {"n_estimators", "num_leaves", "learning_rate"}
+
+
+def test_train_accepts_params():
+    X, y = _make_dataset()
+    model = SignalModel()
+    model.train(X, y, params={"n_estimators": 50, "num_leaves": 15, "learning_rate": 0.1})
+    assert model.model is not None
+    assert model.model.n_estimators == 50
 
 
 def test_missing_features_default_to_zero():

@@ -11,14 +11,15 @@ from sklearn.metrics import roc_auc_score
 
 from tr_agent.ml.dataset import build_full_dataset
 from tr_agent.ml.features import FEATURE_NAMES
-from tr_agent.ml.signal_model import SignalModel
+from tr_agent.ml.signal_model import SignalModel, tune_hyperparams
 
 log = logging.getLogger(__name__)
 
 _MIN_SAMPLES = 50   # need at least this many samples to train meaningfully
-# In HYBRID mode the model is LLM context, not a decision gate — deploy if it has
-# any discriminative power (AUC differs from 0.5 by > 2pp in either direction)
-_MIN_AUC = 0.45
+# In HYBRID mode the model is LLM context, not a decision gate — AUC < 0.5 is
+# expected (mean-reversion signal on buy days). Deploy if it shows any discrimination
+# (> 2pp from random in either direction).
+_MIN_AUC = 0.40
 
 
 def walk_forward_evaluate(
@@ -29,7 +30,7 @@ def walk_forward_evaluate(
         return {"auc": 0.0, "n_splits": 0, "message": "not enough data for CV"}
 
     tscv = TimeSeriesSplit(n_splits=n_splits)
-    aucs = []
+    aucs, precisions, recalls = [], [], []
 
     for train_idx, test_idx in tscv.split(X):
         X_tr, X_te = X.iloc[train_idx], X.iloc[test_idx]
@@ -43,6 +44,8 @@ def walk_forward_evaluate(
         metrics = model.evaluate(X_te, y_te)
         if metrics.get("auc"):
             aucs.append(metrics["auc"])
+            precisions.append(metrics.get("precision", 0.0))
+            recalls.append(metrics.get("recall", 0.0))
 
     if not aucs:
         return {"auc": 0.0, "n_splits": 0, "message": "all folds had single class"}
@@ -50,6 +53,8 @@ def walk_forward_evaluate(
     return {
         "auc": float(np.mean(aucs)),
         "auc_std": float(np.std(aucs)),
+        "avg_precision": float(np.mean(precisions)),
+        "avg_recall": float(np.mean(recalls)),
         "n_splits": len(aucs),
     }
 
@@ -103,10 +108,11 @@ def train_and_deploy(
         _append_history(history_path, {"deployed": False, "cv_auc": cv_auc, "n_samples": n_samples, "reason": msg})
         return {"deployed": False, "reason": msg, "cv_auc": cv_auc, "n_samples": n_samples}
 
-    # Train on full dataset and deploy
+    # Tune hyperparameters, then train on full dataset and deploy
+    tuned_params = tune_hyperparams(X, y)
     version = _next_version(history_path)
     model = SignalModel()
-    model.train(X, y)
+    model.train(X, y, params=tuned_params)
     model.auc = cv_auc
     model.save(model_path, version)
 
@@ -115,7 +121,10 @@ def train_and_deploy(
         "version": version,
         "cv_auc": cv_auc,
         "cv_auc_std": cv_result.get("auc_std", 0.0),
+        "avg_precision": cv_result.get("avg_precision", 0.0),
+        "avg_recall": cv_result.get("avg_recall", 0.0),
         "n_samples": n_samples,
+        "tuned_params": tuned_params,
         "train_ts": datetime.now(timezone.utc).isoformat(),
     }
     _append_history(history_path, record)

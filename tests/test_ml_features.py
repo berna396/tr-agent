@@ -20,7 +20,7 @@ def _make_ohlcv(n: int = 100) -> pd.DataFrame:
 
 
 def test_feature_names_count():
-    assert len(FEATURE_NAMES) == 14
+    assert len(FEATURE_NAMES) == 16
 
 
 def test_compute_all_rows_returns_expected_columns():
@@ -78,3 +78,29 @@ def test_sma_ratio_golden_cross():
     feat = compute_all_rows(df)
     # sma_ratio = sma_20 / sma_50, so > 1 means sma_20 > sma_50
     assert (feat["sma_ratio"] > 0).all()
+
+
+def test_spy_features_zero_without_spy_df():
+    """When no spy_df provided, SPY-relative features must default to 0.0."""
+    df = _make_ohlcv(100)
+    feat = compute_all_rows(df)
+    assert (feat["rel_roc_5"] == 0.0).all()
+    assert (feat["spy_corr_60"] == 0.0).all()
+
+
+def test_spy_features_nonzero_with_spy_df():
+    """When spy_df is provided, SPY-relative features should be computed."""
+    df = _make_ohlcv(200)
+    # Use a slightly different price series for SPY so features are non-trivially different
+    rng = np.random.default_rng(99)
+    spy_prices = 450 + rng.normal(0, 1, 200).cumsum()
+    spy_high = spy_prices + rng.uniform(0, 2, 200)
+    spy_low = spy_prices - rng.uniform(0, 2, 200)
+    spy_vol = rng.integers(1_000_000, 10_000_000, 200).astype(float)
+    spy_df = pd.DataFrame(
+        {"Open": spy_prices, "High": spy_high, "Low": spy_low, "Close": spy_prices, "Volume": spy_vol},
+        index=df.index,
+    )
+    feat = compute_all_rows(df, spy_df=spy_df)
+    # rel_roc_5 should not all be zero when ticker and SPY have different price series
+    assert not (feat["rel_roc_5"] == 0.0).all()

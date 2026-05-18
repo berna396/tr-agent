@@ -102,9 +102,8 @@ def screen(
     # Only keep tickers with a non-neutral signal, sort by score desc
     with_signal = [(t, s, a) for t, s, a in scored if a.signal != Signal.NEUTRAL]
     if not with_signal:
-        # Nothing signaling today — take the highest-scored ones anyway
-        log.info("[Screener] No tickers with active signal today — using top-scored candidates")
-        with_signal = scored
+        log.info("[Screener] No tickers with active signal today — watchlist empty, no trades")
+        return []
 
     with_signal.sort(key=lambda x: x[1], reverse=True)
     selected = [t for t, _, _ in with_signal[:top_n]]

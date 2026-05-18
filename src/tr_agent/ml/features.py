@@ -3,6 +3,7 @@ import pandas as pd
 from ta.momentum import RSIIndicator, ROCIndicator
 from ta.trend import MACD, SMAIndicator, ADXIndicator
 from ta.volatility import AverageTrueRange, BollingerBands
+from typing import Optional
 
 FEATURE_NAMES = [
     "rsi",
@@ -19,10 +20,12 @@ FEATURE_NAMES = [
     "volume_ratio",
     "adx",
     "day_of_week",
+    "rel_roc_5",    # ticker 5-day ROC minus SPY 5-day ROC (excess return vs market)
+    "spy_corr_60",  # 60-day rolling return correlation with SPY (market dependency)
 ]
 
 
-def compute_all_rows(df: pd.DataFrame) -> pd.DataFrame:
+def compute_all_rows(df: pd.DataFrame, spy_df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
     """Compute all ML features for every row in an OHLCV DataFrame."""
     if len(df) < 60:
         return pd.DataFrame(columns=FEATURE_NAMES)
@@ -67,6 +70,20 @@ def compute_all_rows(df: pd.DataFrame) -> pd.DataFrame:
     else:
         dow = pd.Series(0.0, index=df.index)
 
+    # SPY-relative features
+    if spy_df is not None and not spy_df.empty:
+        spy_close = spy_df["Close"].squeeze()
+        spy_close_aligned = spy_close.reindex(df.index).ffill().bfill()
+        spy_roc_5 = ROCIndicator(close=spy_close_aligned, window=5).roc()
+        rel_roc_5 = roc_5 - spy_roc_5
+
+        ticker_returns = close.pct_change()
+        spy_returns = spy_close_aligned.pct_change()
+        spy_corr_60 = ticker_returns.rolling(60).corr(spy_returns).fillna(0.0)
+    else:
+        rel_roc_5 = pd.Series(0.0, index=df.index)
+        spy_corr_60 = pd.Series(0.0, index=df.index)
+
     result = pd.DataFrame(
         {
             "rsi": rsi,
@@ -83,15 +100,17 @@ def compute_all_rows(df: pd.DataFrame) -> pd.DataFrame:
             "volume_ratio": volume_ratio,
             "adx": adx,
             "day_of_week": dow,
+            "rel_roc_5": rel_roc_5,
+            "spy_corr_60": spy_corr_60,
         },
         index=df.index,
     )
     return result.dropna()
 
 
-def compute_last_row(df: pd.DataFrame) -> dict:
+def compute_last_row(df: pd.DataFrame, spy_df: Optional[pd.DataFrame] = None) -> dict:
     """Return the feature vector for the most recent row."""
-    feat_df = compute_all_rows(df)
+    feat_df = compute_all_rows(df, spy_df=spy_df)
     if feat_df.empty:
         return {f: 0.0 for f in FEATURE_NAMES}
     return {k: float(v) for k, v in feat_df.iloc[-1].items()}
