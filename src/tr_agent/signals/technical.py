@@ -6,9 +6,10 @@ from typing import Optional
 import logging
 
 import pandas as pd
-import yfinance as yf
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, SMAIndicator
+
+from tr_agent import yf_utils
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +65,7 @@ class TechnicalAnalysis:
 def _fetch_intraday(ticker: str) -> pd.DataFrame:
     """Fetch 5 days of 15-min bars. Returns empty DataFrame on failure."""
     try:
-        df = yf.download(ticker, period="5d", interval="15m", progress=False, auto_adjust=True)
+        df = yf_utils.download(ticker, period="5d", interval="15m")
         return df if not df.empty else pd.DataFrame()
     except Exception:
         return pd.DataFrame()
@@ -110,7 +111,7 @@ def analyze(ticker: str, timeframe: str = "1y") -> TechnicalAnalysis:
     Intraday 15-min bars are fetched separately and used only to compute today's
     price trend (up/down vs open), which is injected into the LLM prompt as context.
     """
-    df = yf.download(ticker, period=timeframe, interval="1d", progress=False, auto_adjust=True)
+    df = yf_utils.download(ticker, period=timeframe, interval="1d")
     if df.empty or len(df) < 50:
         raise ValueError(f"No hay suficientes datos para {ticker} (timeframe={timeframe})")
 
@@ -170,7 +171,7 @@ def _get_spy_df() -> Optional[pd.DataFrame]:
     today = date.today().isoformat()
     if today not in _SPY_CACHE:
         try:
-            spy = yf.download("SPY", period="1y", interval="1d", progress=False, auto_adjust=True)
+            spy = yf_utils.download("SPY", period="1y", interval="1d")
             if not spy.empty:
                 _SPY_CACHE.clear()
                 _SPY_CACHE[today] = spy
@@ -191,13 +192,13 @@ def _fetch_alternative_features(ticker: str, headlines: list[dict]) -> dict:
     except Exception:
         pass
     try:
-        t = yf.Ticker(ticker)
+        t = yf_utils.ticker(ticker)
         info = t.info or {}
         result["short_ratio"] = float(info.get("shortRatio") or 0.0)
     except Exception:
         pass
     try:
-        t = yf.Ticker(ticker)
+        t = yf_utils.ticker(ticker)
         expiries = t.options
         if expiries:
             chain = t.option_chain(expiries[0])

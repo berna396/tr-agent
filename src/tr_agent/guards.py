@@ -2,8 +2,7 @@ import logging
 from datetime import date as date_type
 from datetime import datetime, timezone
 
-import yfinance as yf
-
+from tr_agent import yf_utils
 from tr_agent.assets import is_crypto
 
 log = logging.getLogger(__name__)
@@ -17,7 +16,7 @@ def days_until_earnings(ticker: str) -> int | None:
     if is_crypto(ticker):
         return None
     try:
-        cal = yf.Ticker(ticker).calendar
+        cal = yf_utils.ticker(ticker).calendar
         if cal is None or not hasattr(cal, "get"):
             return None
         raw_dates = cal.get("Earnings Date", [])
@@ -47,7 +46,7 @@ def is_earnings_blackout(ticker: str, days_before: int = 3, days_after: int = 1)
     if is_crypto(ticker):
         return False
     try:
-        cal = yf.Ticker(ticker).calendar
+        cal = yf_utils.ticker(ticker).calendar
         if cal is None:
             return False
 

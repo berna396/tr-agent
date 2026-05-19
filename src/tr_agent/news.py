@@ -7,7 +7,7 @@ import logging
 from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
-import yfinance as yf
+from tr_agent import yf_utils
 
 try:
     from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
@@ -36,7 +36,7 @@ def fetch_news(
     if cache_key not in _NEWS_CACHE:
         _NEWS_CACHE.clear()  # drop stale entries from previous days
         try:
-            raw = yf.Ticker(ticker).news or []
+            raw = yf_utils.ticker(ticker).news or []
         except Exception as e:
             log.debug(f"[News] {ticker}: fetch failed — {e}")
             return []

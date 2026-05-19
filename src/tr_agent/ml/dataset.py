@@ -5,8 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
-
+from tr_agent import yf_utils
 from tr_agent.ml.features import FEATURE_NAMES, compute_all_rows
 
 log = logging.getLogger(__name__)
@@ -36,7 +35,7 @@ def build_historical_dataset(
     # Download SPY once for correlation features shared across all tickers
     spy_df = None
     try:
-        spy_df = yf.download("SPY", period=period, interval="1d", progress=False, auto_adjust=True)
+        spy_df = yf_utils.download("SPY", period=period, interval="1d")
         if spy_df.empty:
             spy_df = None
         else:
@@ -49,9 +48,7 @@ def build_historical_dataset(
     for ticker in tickers:
         log.info(f"[ML] Bootstrapping {ticker} ({period})...")
         try:
-            df = yf.download(
-                ticker, period=period, interval="1d", progress=False, auto_adjust=True
-            )
+            df = yf_utils.download(ticker, period=period, interval="1d")
             if df.empty or len(df) < 60:
                 log.warning(f"[ML] Skipping {ticker} — insufficient data ({len(df)} rows)")
                 continue

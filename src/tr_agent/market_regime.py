@@ -1,8 +1,8 @@
 import logging
 from dataclasses import dataclass
 
-import yfinance as yf
 from ta.trend import SMAIndicator
+from tr_agent import yf_utils
 
 log = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ class MarketRegime:
 def get_regime(ticker: str = "SPY") -> MarketRegime:
     """Return current market regime based on golden/death cross (SMA50 vs SMA200)."""
     try:
-        df = yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True)
+        df = yf_utils.download(ticker, period="1y", interval="1d")
         if df.empty or len(df) < 200:
             log.warning(f"[Regime] Insufficient data for {ticker} — defaulting to bullish")
             return MarketRegime(bullish=True, sma50=0.0, sma200=0.0, source=ticker)

@@ -3,8 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-import yfinance as yf
-
+from tr_agent import yf_utils
 from tr_agent.broker.base import (
     BaseBroker,
     Order,
@@ -29,7 +28,7 @@ class PaperBroker(BaseBroker):
         self._tracker: PortfolioTracker = persistence.load(initial_capital, self._state_path)
 
     def get_quote(self, ticker: str) -> Quote:
-        data = yf.Ticker(ticker).fast_info
+        data = yf_utils.ticker(ticker).fast_info
         price = float(data.last_price)
         spread = price * 0.0005  # spread simulado de 0.05%
         return Quote(
@@ -82,7 +81,7 @@ class PaperBroker(BaseBroker):
         current_prices: dict[str, float] = {}
         for ticker in (tickers or list(self._tracker.get_portfolio().positions.keys())):
             try:
-                current_prices[ticker] = float(yf.Ticker(ticker).fast_info.last_price)
+                current_prices[ticker] = float(yf_utils.ticker(ticker).fast_info.last_price)
             except Exception:
                 pass
         return self._tracker.get_metrics(current_prices)

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytz
 from flask import Flask, Response, jsonify, render_template_string, request
+from tr_agent import yf_utils
 
 BASE_DIR = Path(__file__).parents[2]
 CONF = str(BASE_DIR / "supervisord.conf")
@@ -107,7 +108,7 @@ def api_portfolio():
             prices = {}
             for t in positions:
                 try:
-                    prices[t] = float(yf.Ticker(t).fast_info.last_price)
+                    prices[t] = float(yf_utils.ticker(t).fast_info.last_price)
                 except Exception:
                     pass
         except Exception:
@@ -250,7 +251,7 @@ def api_equity():
         mkt_val = 0.0
         for ticker, pos in current_positions.items():
             try:
-                live_price = float(yf.Ticker(ticker).fast_info.last_price)
+                live_price = float(yf_utils.ticker(ticker).fast_info.last_price)
             except Exception:
                 live_price = pos["avg_price"]
             mkt_val += pos["quantity"] * live_price
