@@ -11,8 +11,10 @@ from tr_agent.ml.features import FEATURE_NAMES, compute_all_rows
 
 log = logging.getLogger(__name__)
 
-_FORWARD_DAYS = 10       # give signal more time to play out
-_LABEL_THRESHOLD = 0.005  # 0.5% minimum move to avoid noisy neutral zone
+# Multi-horizon label ensemble: majority vote across 3 horizons
+_FORWARD_DAYS  = [5,     10,    20   ]   # horizons
+_THRESHOLDS    = [0.005, 0.005, 0.010]   # minimum move per horizon
+_WHIPSAW_DD    = 0.03                    # reject label if 5d forward drawdown > 3%
 
 
 def _is_buy_signal(rsi: float, macd_hist: float, sma_ratio: float) -> bool:
@@ -56,33 +58,47 @@ def build_historical_dataset(
 
             feat_df = compute_all_rows(df, spy_df=spy_df)
             close = df["Close"].squeeze().reindex(feat_df.index)
-            forward_return = close.shift(-_FORWARD_DAYS) / close - 1
 
+            # Build multi-horizon forward returns
             combined = feat_df.copy()
-            combined["_fwd"] = forward_return
-            combined["_close"] = close.reindex(feat_df.index)
-            combined = combined.dropna(subset=["_fwd"])
+            for days, thresh in zip(_FORWARD_DAYS, _THRESHOLDS):
+                combined[f"_fwd_{days}"] = close.shift(-days) / close - 1
+            combined = combined.dropna(subset=[f"_fwd_{d}" for d in _FORWARD_DAYS])
 
-            # Filter to buy-signal days so the model learns specifically when
-            # the rule-based signal tends to be reliable vs. a false positive
+            # Filter to buy-signal days
             signal_mask = combined.apply(
                 lambda r: _is_buy_signal(r["rsi"], r["macd_hist"], r["sma_ratio"]),
                 axis=1,
             )
-            signal_days = combined[signal_mask]
-
-            # Drop the neutral zone
-            non_neutral = signal_days[signal_days["_fwd"].abs() > _LABEL_THRESHOLD]
-            if non_neutral.empty:
-                log.warning(f"[ML] {ticker}: no signal days with clear forward return")
+            signal_days = combined[signal_mask].copy()
+            if signal_days.empty:
+                log.warning(f"[ML] {ticker}: no signal days")
                 continue
 
-            X = non_neutral[FEATURE_NAMES]
-            y = (non_neutral["_fwd"] > 0).astype(int)
+            # Ensemble label: positive if ≥2 of 3 horizons clear the threshold
+            votes = sum(
+                (signal_days[f"_fwd_{days}"] > thresh).astype(int)
+                for days, thresh in zip(_FORWARD_DAYS, _THRESHOLDS)
+            )
+            label = (votes >= 2).astype(int)
+
+            # Whipsaw filter: suppress positive label when 5d forward drawdown > threshold
+            # close.rolling(5).min().shift(-5) = min of the 5 days immediately after each row
+            close_full = df["Close"].squeeze()
+            fwd_min_5 = close_full.rolling(5).min().shift(-5).reindex(signal_days.index)
+            close_aligned = close.reindex(signal_days.index)
+            dd_5 = (fwd_min_5 / close_aligned - 1)
+            label[dd_5 < -_WHIPSAW_DD] = 0
+
+            X = signal_days[FEATURE_NAMES]
+            y = label
 
             all_X.append(X)
             all_y.append(y)
-            log.info(f"[ML] {ticker}: {len(y)} labeled samples (pos={y.sum()}, neg={(y==0).sum()})")
+            log.info(
+                f"[ML] {ticker}: {len(y)} samples after ensemble labels "
+                f"(pos={int(y.sum())}, neg={int((y==0).sum())})"
+            )
 
         except Exception as e:
             log.error(f"[ML] Failed to bootstrap {ticker}: {e}")

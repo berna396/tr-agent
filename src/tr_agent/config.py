@@ -41,5 +41,9 @@ class Settings(BaseSettings):
     earnings_blackout_days: int = 3           # avoid BUY within N days of earnings
     regime_filter_enabled: bool = True        # suppress BUY when SPY is bearish
 
+    # v0.8 improvements
+    kelly_sizing: bool = True                 # use half-Kelly position sizing when stats available
+    news_risk_gate: bool = True               # block BUY when news risk is "high" + sentiment < -0.5
+
 
 settings = Settings()

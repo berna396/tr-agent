@@ -40,6 +40,7 @@ class TechnicalAnalysis:
     sma_200: Optional[float] = None
     intraday_trend: Optional[str] = None       # "up" / "down" / None if unavailable
     intraday_change_pct: Optional[float] = None  # % change from today's first bar to now
+    headlines: list = field(default_factory=list)  # fetched once, reused by LLM stages
 
     def to_dict(self) -> dict:
         return {
@@ -122,7 +123,11 @@ def analyze(ticker: str, timeframe: str = "1y") -> TechnicalAnalysis:
 
     signal, reasoning = _derive_signal(rsi_val, macd_hist_val, sma_20, sma_50, float(close.iloc[-1]))
 
-    ml_confidence, ml_available, ml_feats = _enrich_with_ml(df)
+    # Fetch headlines once; reused by both ML enrichment and the LLM confirmation prompt
+    from tr_agent.news import fetch_news
+    headlines = fetch_news(ticker)
+
+    ml_confidence, ml_available, ml_feats = _enrich_with_ml(df, ticker=ticker, headlines=headlines)
 
     # Intraday context — direction only, not used in signal logic
     intraday_df = _fetch_intraday(ticker)
@@ -148,6 +153,7 @@ def analyze(ticker: str, timeframe: str = "1y") -> TechnicalAnalysis:
         ml_features=ml_feats,
         intraday_trend=trend,
         intraday_change_pct=change_pct,
+        headlines=headlines,
     )
 
 
@@ -165,16 +171,62 @@ def _get_spy_df() -> Optional[pd.DataFrame]:
     return _SPY_CACHE.get(today)
 
 
-def _enrich_with_ml(df) -> tuple[Optional[float], bool, dict]:
+def _fetch_alternative_features(ticker: str, headlines: list[dict]) -> dict:
+    """
+    Compute live alternative-data features that are unavailable for historical dates.
+    Never raises — returns neutral defaults on any error.
+    """
+    from tr_agent.news import get_sentiment_score
+    result = {"news_sentiment": 0.0, "iv_rank": 0.0, "put_call_ratio": 1.0, "short_ratio": 0.0}
+    try:
+        result["news_sentiment"] = get_sentiment_score(headlines)
+    except Exception:
+        pass
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info or {}
+        result["short_ratio"] = float(info.get("shortRatio") or 0.0)
+    except Exception:
+        pass
+    try:
+        t = yf.Ticker(ticker)
+        expiries = t.options
+        if expiries:
+            chain = t.option_chain(expiries[0])
+            calls, puts = chain.calls, chain.puts
+            call_vol = float(calls["volume"].fillna(0).sum())
+            put_vol  = float(puts["volume"].fillna(0).sum())
+            result["put_call_ratio"] = round(put_vol / call_vol, 4) if call_vol > 0 else 1.0
+            # IV rank: ATM call IV as a simple proxy (normalised to [0, 1] by dividing by 2.0)
+            if not calls.empty:
+                current_price = float(t.history(period="1d")["Close"].iloc[-1])
+                atm_calls = calls.iloc[(calls["strike"] - current_price).abs().argsort()[:1]]
+                raw_iv = float(atm_calls["impliedVolatility"].iloc[0]) if not atm_calls.empty else 0.0
+                result["iv_rank"] = round(min(raw_iv / 2.0, 1.0), 4)
+    except Exception:
+        pass
+    return result
+
+
+def _enrich_with_ml(df, ticker: str = "", headlines: list | None = None) -> tuple[Optional[float], bool, dict]:
     """Compute ML feature vector and model confidence. Never raises."""
     try:
         from pathlib import Path
         from tr_agent.ml.features import compute_last_row
         from tr_agent.ml.signal_model import SignalModel
-        from tr_agent.config import settings
 
         spy_df = _get_spy_df()
         ml_feats = compute_last_row(df, spy_df=spy_df)
+
+        # Overlay live alternative-data features
+        alt = _fetch_alternative_features(ticker, headlines or [])
+        ml_feats.update(alt)
+        log.debug(
+            f"[Signal] {ticker}: news_sentiment={alt['news_sentiment']:.2f} "
+            f"iv_rank={alt['iv_rank']:.2f} put_call={alt['put_call_ratio']:.2f} "
+            f"short_ratio={alt['short_ratio']:.1f}"
+        )
+
         model_path = Path(__file__).parents[3] / "data" / "models" / "signal_model.pkl"
         model = SignalModel.load(model_path)
         if model is None:

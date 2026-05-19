@@ -7,6 +7,34 @@ import yfinance as yf
 log = logging.getLogger(__name__)
 
 
+def days_until_earnings(ticker: str) -> int | None:
+    """
+    Return integer days until the next earnings date, or None if unknown.
+    Negative means earnings already passed. Never raises.
+    """
+    try:
+        cal = yf.Ticker(ticker).calendar
+        if cal is None or not hasattr(cal, "get"):
+            return None
+        raw_dates = cal.get("Earnings Date", [])
+        if not raw_dates or (hasattr(raw_dates, "__len__") and len(raw_dates) == 0):
+            return None
+        now = datetime.now(timezone.utc)
+        deltas = []
+        for date in raw_dates:
+            if hasattr(date, "to_pydatetime"):
+                date = date.to_pydatetime()
+            if isinstance(date, date_type) and not isinstance(date, datetime):
+                date = datetime(date.year, date.month, date.day, tzinfo=timezone.utc)
+            if hasattr(date, "tzinfo") and date.tzinfo is None:
+                date = date.replace(tzinfo=timezone.utc)
+            deltas.append((date - now).days)
+        upcoming = [d for d in deltas if d >= 0]
+        return min(upcoming) if upcoming else None
+    except Exception:
+        return None
+
+
 def is_earnings_blackout(ticker: str, days_before: int = 3, days_after: int = 1) -> bool:
     """
     Returns True if we are within the earnings blackout window for this ticker.

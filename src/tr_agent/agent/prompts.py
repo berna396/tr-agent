@@ -33,15 +33,11 @@ def ml_confidence_line(ml_confidence: float | None, ml_available: bool, n_sample
     return f"ML model confidence: {ml_confidence:.0%} probability of profitable outcome ({label}; trained on {n_samples} samples)"
 
 
-def news_section(news_items: list[dict]) -> str:
-    """Format recent news headlines for the LLM prompt. Returns '' if no items."""
-    if not news_items:
+def news_section(news_ctx) -> str:
+    """Format a NewsContext for the LLM trade-confirmation prompt. Returns '' if None."""
+    if news_ctx is None:
         return ""
-    lines = ["Recent news:"]
-    for item in news_items:
-        pub = f" ({item['publisher']}, {item['age_str']})" if item.get("publisher") else f" ({item['age_str']})"
-        lines.append(f'- "{item["title"]}"{pub}')
-    return "\n".join(lines)
+    return news_ctx.prompt_block()
 
 
 def rules_section(rules_path: Path) -> str:

@@ -209,5 +209,16 @@ def ml_analyze(
         console.print(f"\n{insights}")
 
 
+@app.command()
+def web(
+    host: str = typer.Option("0.0.0.0", "--host", help="Bind host"),
+    port: int = typer.Option(8080, "--port", "-p", help="Port to listen on"),
+):
+    """Start the web dashboard (process control, metrics, live logs)."""
+    from tr_agent.web import main as web_main
+    console.print(f"\n[bold green]tr-agent dashboard[/bold green] → http://{host}:{port}\n")
+    web_main(host=host, port=port)
+
+
 if __name__ == "__main__":
     app()

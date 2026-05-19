@@ -9,7 +9,7 @@ import ollama
 from tr_agent.agent.prompts import SYSTEM_PROMPT, ml_confidence_line, news_section, regime_line, rules_section
 from tr_agent.broker.base import OrderSide, Portfolio
 from tr_agent.config import settings
-from tr_agent import memory, news as news_mod
+from tr_agent import memory
 from tr_agent.risk import RiskCheck
 from tr_agent.signals.technical import TechnicalAnalysis
 
@@ -32,6 +32,7 @@ def confirm_trade(
     portfolio: Portfolio,
     journal_path: Optional[Path] = None,
     regime=None,
+    news_ctx=None,
 ) -> TradeDecision:
     """Ask the LLM to review the signal, risk check and past performance. Returns a final trade decision."""
     positions_summary = {
@@ -44,7 +45,6 @@ def confirm_trade(
         **({"path": journal_path} if journal_path else {}),
     )
 
-    ticker_news = news_mod.fetch_news(analysis.ticker)
     learned_rules = rules_section(_RULES_PATH)
 
     sma200_str = f" | SMA200: {analysis.sma_200:.2f}" if analysis.sma_200 is not None else ""
@@ -59,7 +59,7 @@ def confirm_trade(
     else:
         intraday_context = ""
 
-    news_block = news_section(ticker_news)
+    news_block = news_section(news_ctx)
     rules_block = learned_rules
 
     prompt = f"""Signal: {analysis.signal.upper()} on {analysis.ticker}
@@ -83,8 +83,8 @@ Portfolio:
 {f"{chr(10)}{memory_context}" if memory_context else ""}{f"{chr(10)}{rules_block}" if rules_block else ""}
 Should we execute this {analysis.signal} trade?"""
 
-    if ticker_news:
-        log.info(f"[LLM] {analysis.ticker}: {len(ticker_news)} news headline(s) injected")
+    if news_ctx and news_ctx.summary:
+        log.info(f"[LLM] {analysis.ticker}: news context injected (risk={news_ctx.risk_level})")
     if learned_rules:
         log.info(f"[LLM] {analysis.ticker}: learned rules injected ({len(learned_rules)} chars)")
     log.info(f"[LLM] Asking for confirmation on {analysis.ticker} {analysis.signal}...")

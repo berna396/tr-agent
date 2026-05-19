@@ -1,5 +1,5 @@
 """
-Fetches recent news headlines per ticker via yfinance.
+Fetches recent news headlines per ticker via yfinance and scores their sentiment with VADER.
 Results are cached per (ticker, day) to avoid redundant calls during screener runs.
 """
 
@@ -8,6 +8,12 @@ from datetime import date, datetime, timezone, timedelta
 from typing import Optional
 
 import yfinance as yf
+
+try:
+    from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+    _vader = SentimentIntensityAnalyzer()
+except Exception:
+    _vader = None
 
 log = logging.getLogger(__name__)
 
@@ -70,3 +76,15 @@ def fetch_news(
             break
 
     return results
+
+
+def get_sentiment_score(headlines: list[dict]) -> float:
+    """
+    Return VADER compound sentiment score for a list of headline dicts.
+    Each dict must have a "title" key. Returns 0.0 if VADER unavailable or no headlines.
+    Score range: -1.0 (very negative) to +1.0 (very positive).
+    """
+    if not headlines or _vader is None:
+        return 0.0
+    scores = [_vader.polarity_scores(h.get("title", ""))["compound"] for h in headlines]
+    return round(sum(scores) / len(scores), 4)

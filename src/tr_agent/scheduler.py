@@ -9,6 +9,7 @@ from pathlib import Path
 
 from tr_agent import guards, journal, market_regime, notifier, risk, screener
 from tr_agent.agent import core as llm
+from tr_agent.agent.news_analyst import analyze_news
 from tr_agent.broker.base import OrderSide
 from tr_agent.broker.paper import PaperBroker
 from tr_agent.config import DEFAULT_WATCHLIST, settings
@@ -132,6 +133,7 @@ def run_cycle(tickers: list[str] | None = None) -> None:
             continue
 
         # BUY-only guards: regime filter and earnings blackout
+        earnings_days: int | None = None
         if analysis.signal == Signal.BUY:
             if settings.regime_filter_enabled and not regime.bullish:
                 log.info(
@@ -140,6 +142,7 @@ def run_cycle(tickers: list[str] | None = None) -> None:
                 )
                 continue
 
+            earnings_days = guards.days_until_earnings(ticker)
             if settings.earnings_blackout_days > 0 and guards.is_earnings_blackout(
                 ticker, days_before=settings.earnings_blackout_days
             ):
@@ -147,6 +150,20 @@ def run_cycle(tickers: list[str] | None = None) -> None:
                 notifier.send(
                     f"📅 *{ticker}* BUY suppressed — earnings within "
                     f"{settings.earnings_blackout_days} days"
+                )
+                continue
+
+        # Stage 1.5: News analysis — structured LLM context replacing raw headlines
+        news_ctx = analyze_news(ticker, analysis.headlines, earnings_days_away=earnings_days)
+        if analysis.signal == Signal.BUY and settings.news_risk_gate:
+            if news_ctx.is_high_risk and news_ctx.sentiment_score < -0.5:
+                log.info(
+                    f"[Cycle] {ticker}: BUY suppressed — news risk gate "
+                    f"(risk={news_ctx.risk_level} sentiment={news_ctx.sentiment_score:.2f})"
+                )
+                notifier.send(
+                    f"📰 *{ticker}* BUY suppressed — news risk\n"
+                    f"_{news_ctx.summary}_"
                 )
                 continue
 
@@ -162,8 +179,8 @@ def run_cycle(tickers: list[str] | None = None) -> None:
             notifier.send(f"⚠️ *{ticker}* signal blocked by risk manager\n_{risk_check.reason}_")
             continue
 
-        # Stage 3: LLM confirmation (with memory context and regime)
-        decision = llm.confirm_trade(analysis, risk_check, portfolio, regime=regime)
+        # Stage 3: LLM confirmation (with memory context, regime, and news context)
+        decision = llm.confirm_trade(analysis, risk_check, portfolio, regime=regime, news_ctx=news_ctx)
         journal.log_llm_decision(ticker, decision.confirmed, decision.quantity, decision.reasoning)
         log.info(
             f"[Cycle] {ticker}: LLM {'confirmed' if decision.confirmed else 'rejected'} "
@@ -212,6 +229,17 @@ def run_cycle(tickers: list[str] | None = None) -> None:
                 "quantity": order.quantity,
                 "fill_price": order.fill_price,
             })
+
+            # Rich manual-execution alert
+            from tr_agent.risk import MAX_TRADE_PCT
+            trade_pct = analysis.ml_features.get("_kelly_pct", MAX_TRADE_PCT)
+            notifier.send_trade_alert(
+                analysis=analysis,
+                decision=decision,
+                trade_pct=risk_check.max_quantity * order.fill_price / (portfolio.cash or 1),
+                news_ctx=news_ctx,
+                stop_price=atr_stop,
+            )
         except Exception as e:
             log.error(f"[Cycle] {ticker}: order failed — {e}")
 
@@ -245,7 +273,8 @@ def start(tickers: list[str] | None = None) -> None:
             timezone=ET,
             start_date=datetime.now(ET).replace(hour=9, minute=30, second=0),
         ),
-        kwargs={"tickers": tickers},
+        # No tickers kwarg — run_cycle reads active_watchlist.json on every call,
+        # which the 9:15 screener updates each morning.
         id="trading_cycle",
         name="Trading cycle",
         misfire_grace_time=300,
@@ -269,9 +298,16 @@ def start(tickers: list[str] | None = None) -> None:
         misfire_grace_time=3600,
     )
 
+    active = screener.load_active_watchlist(_WATCHLIST_PATH)
     log.info(f"Scheduler started — running every 30 min during NYSE hours (9:30–16:00 ET)")
-    log.info(f"Watchlist: {', '.join(tickers or DEFAULT_WATCHLIST)}")
+    log.info(f"Active watchlist ({len(active)}): {', '.join(active)}")
     log.info("Press Ctrl+C to stop")
+
+    notifier.send(
+        f"🤖 *tr-agent started*\n"
+        f"Active watchlist ({len(active)}): `{', '.join(active)}`\n"
+        f"Screener refreshes at 9:15 ET · Cycles every 30 min 9:30–15:30 ET"
+    )
 
     try:
         scheduler.start()

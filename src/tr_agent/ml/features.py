@@ -20,8 +20,13 @@ FEATURE_NAMES = [
     "volume_ratio",
     "adx",
     "day_of_week",
-    "rel_roc_5",    # ticker 5-day ROC minus SPY 5-day ROC (excess return vs market)
-    "spy_corr_60",  # 60-day rolling return correlation with SPY (market dependency)
+    "rel_roc_5",       # ticker 5-day ROC minus SPY 5-day ROC (excess return vs market)
+    "spy_corr_60",     # 60-day rolling return correlation with SPY (market dependency)
+    # Alternative data — 0.0 in historical bootstrap; real values stored for live trades
+    "news_sentiment",  # VADER compound score on recent headlines [-1, 1]
+    "iv_rank",         # ATM implied volatility of nearest options expiry (normalised)
+    "put_call_ratio",  # put volume / call volume for nearest expiry
+    "short_ratio",     # short interest ratio (days to cover)
 ]
 
 
@@ -102,6 +107,12 @@ def compute_all_rows(df: pd.DataFrame, spy_df: Optional[pd.DataFrame] = None) ->
             "day_of_week": dow,
             "rel_roc_5": rel_roc_5,
             "spy_corr_60": spy_corr_60,
+            # Alternative data: 0.0 placeholder for historical bootstrap;
+            # live values are injected in technical.py _enrich_with_ml()
+            "news_sentiment": pd.Series(0.0, index=df.index),
+            "iv_rank":        pd.Series(0.0, index=df.index),
+            "put_call_ratio": pd.Series(1.0, index=df.index),
+            "short_ratio":    pd.Series(0.0, index=df.index),
         },
         index=df.index,
     )
