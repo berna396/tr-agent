@@ -29,10 +29,7 @@ def refresh_watchlist(tickers: list[str] | None = None) -> None:
     pool = tickers or None  # None → uses CANDIDATE_POOL
     selected = screener.screen(pool=pool)
     screener.save_active_watchlist(selected, _WATCHLIST_PATH)
-    notifier.send(
-        f"*Today's watchlist ({len(selected)} tickers)*\n"
-        + ", ".join(selected)
-    )
+    log.info(f"[Screener] Watchlist updated: {', '.join(selected)}")
 
 
 def run_cycle(tickers: list[str] | None = None) -> None:
@@ -95,10 +92,13 @@ def run_cycle(tickers: list[str] | None = None) -> None:
                     f"[StopLoss] {sl_ticker}: sold {order.quantity:.4f} @ "
                     f"${order.fill_price:.2f} ({loss_pct:+.1%}, {threshold_str})"
                 )
-                notifier.send(
-                    f"🛑 *Stop-loss* {sl_ticker}\n"
-                    f"Sold {order.quantity:.2f} sh @ ${order.fill_price:.2f} "
-                    f"({loss_pct:+.1%})"
+                notifier.send_trade_slack(
+                    ticker=sl_ticker,
+                    side="sell",
+                    quantity=order.quantity,
+                    price=order.fill_price,
+                    pnl_pct=loss_pct * 100,
+                    reason="stop-loss",
                 )
         except Exception as e:
             log.error(f"[StopLoss] {sl_ticker}: {e}")
@@ -147,10 +147,6 @@ def run_cycle(tickers: list[str] | None = None) -> None:
                 ticker, days_before=settings.earnings_blackout_days
             ):
                 log.info(f"[Cycle] {ticker}: BUY suppressed — earnings blackout")
-                notifier.send(
-                    f"📅 *{ticker}* BUY suppressed — earnings within "
-                    f"{settings.earnings_blackout_days} days"
-                )
                 continue
 
         # Stage 1.5: News analysis — structured LLM context replacing raw headlines
@@ -160,10 +156,6 @@ def run_cycle(tickers: list[str] | None = None) -> None:
                 log.info(
                     f"[Cycle] {ticker}: BUY suppressed — news risk gate "
                     f"(risk={news_ctx.risk_level} sentiment={news_ctx.sentiment_score:.2f})"
-                )
-                notifier.send(
-                    f"📰 *{ticker}* BUY suppressed — news risk\n"
-                    f"_{news_ctx.summary}_"
                 )
                 continue
 
@@ -176,7 +168,6 @@ def run_cycle(tickers: list[str] | None = None) -> None:
 
         if not risk_check.approved:
             log.info(f"[Cycle] {ticker}: risk rejected — {risk_check.reason}")
-            notifier.send(f"⚠️ *{ticker}* signal blocked by risk manager\n_{risk_check.reason}_")
             continue
 
         # Stage 3: LLM confirmation (with memory context, regime, and news context)
@@ -230,22 +221,29 @@ def run_cycle(tickers: list[str] | None = None) -> None:
                 "fill_price": order.fill_price,
             })
 
-            # Rich manual-execution alert
-            from tr_agent.risk import MAX_TRADE_PCT
-            trade_pct = analysis.ml_features.get("_kelly_pct", MAX_TRADE_PCT)
-            notifier.send_trade_alert(
-                analysis=analysis,
-                decision=decision,
-                trade_pct=risk_check.max_quantity * order.fill_price / (portfolio.cash or 1),
-                news_ctx=news_ctx,
-                stop_price=atr_stop,
+            cash_pct = risk_check.max_quantity * order.fill_price / (portfolio.cash or 1)
+            pnl_pct_val: float | None = None
+            if order.side.value == "sell":
+                pending = journal.get_pending_buy(ticker)
+                if pending:
+                    pnl_pct_val = (order.fill_price - pending["fill_price"]) / pending["fill_price"] * 100
+            notifier.send_trade_slack(
+                ticker=ticker,
+                side=order.side.value,
+                quantity=order.quantity,
+                price=order.fill_price,
+                cash_pct=cash_pct if order.side.value == "buy" else None,
+                stop_price=atr_stop if order.side.value == "buy" else None,
+                pnl_pct=pnl_pct_val,
             )
         except Exception as e:
             log.error(f"[Cycle] {ticker}: order failed — {e}")
 
     metrics = broker.get_metrics(tickers)
-    notifier.send_run_summary(tickers, "", metrics, orders_placed)
-    log.info(f"[Cycle] Done — {len(orders_placed)} trades executed")
+    log.info(
+        f"[Cycle] Done — {len(orders_placed)} trades executed | "
+        f"portfolio ${metrics['total_value']:,.2f} ({metrics['total_return_pct']:+.2f}%)"
+    )
 
 
 def start(tickers: list[str] | None = None) -> None:
@@ -302,12 +300,6 @@ def start(tickers: list[str] | None = None) -> None:
     log.info(f"Scheduler started — running every 30 min during NYSE hours (9:30–16:00 ET)")
     log.info(f"Active watchlist ({len(active)}): {', '.join(active)}")
     log.info("Press Ctrl+C to stop")
-
-    notifier.send(
-        f"🤖 *tr-agent started*\n"
-        f"Active watchlist ({len(active)}): `{', '.join(active)}`\n"
-        f"Screener refreshes at 9:15 ET · Cycles every 30 min 9:30–15:30 ET"
-    )
 
     try:
         scheduler.start()

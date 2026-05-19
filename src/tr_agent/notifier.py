@@ -6,6 +6,8 @@ from tr_agent.config import settings
 log = logging.getLogger(__name__)
 
 
+# ── Telegram (kept for backward compatibility) ────────────────────────────────
+
 def send(message: str) -> bool:
     """Send a Telegram message. Returns True on success."""
     if not settings.telegram_token or not settings.telegram_chat_id:
@@ -27,7 +29,6 @@ def send(message: str) -> bool:
                 resp.status_code,
                 resp.text[:200],
             )
-            # Retry without Markdown in case of a parse error
             resp2 = httpx.post(
                 f"https://api.telegram.org/bot{settings.telegram_token}/sendMessage",
                 json={"chat_id": settings.telegram_chat_id, "text": message},
@@ -42,77 +43,68 @@ def send(message: str) -> bool:
         return False
 
 
-def send_run_summary(
-    tickers: list[str],
-    agent_result: str,
-    metrics: dict,
-    orders_this_run: list[dict],
-) -> bool:
-    lines = ["📊 *tr-agent run*", f"Watchlist: `{', '.join(tickers)}`", ""]
+# ── Slack ─────────────────────────────────────────────────────────────────────
 
-    if orders_this_run:
-        lines.append("*Trades executed:*")
-        for o in orders_this_run:
-            emoji = "🟢" if o["side"] == "buy" else "🔴"
-            lines.append(
-                f"{emoji} {o['side'].upper()} {o['quantity']} {o['ticker']} @ ${o['fill_price']:.2f}"
-            )
-    else:
-        lines.append("⏸ No trades — no clear signal")
-
-    lines += [
-        "",
-        "*Portfolio*",
-        f"💵 Cash: ${metrics['cash']:,.2f}",
-        f"📈 Total value: ${metrics['total_value']:,.2f}",
-        f"{'🟢' if metrics['total_return_pct'] >= 0 else '🔴'} Return: {metrics['total_return_pct']:+.2f}%",
-        f"🔁 Total trades: {metrics['num_trades']}",
-    ]
-
-    return send("\n".join(lines))
+def send_slack(text: str) -> bool:
+    """Post a plain-text message to the configured Slack webhook. Returns True on success."""
+    if not settings.slack_webhook_url:
+        log.debug("Slack webhook not configured — skipping notification")
+        return False
+    try:
+        resp = httpx.post(
+            settings.slack_webhook_url,
+            json={"text": text},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            log.error("Slack send failed: HTTP %d — %s", resp.status_code, resp.text[:200])
+            return False
+        return True
+    except Exception as exc:
+        log.error("Slack send exception: %s", exc)
+        return False
 
 
-def send_trade_alert(
-    analysis,
-    decision,
-    trade_pct: float,
-    news_ctx=None,
+def send_trade_slack(
+    ticker: str,
+    side: str,            # "buy" | "sell"
+    quantity: float,
+    price: float,
+    cash_pct: float | None = None,   # fraction of cash, e.g. 0.08 = 8%
     stop_price: float | None = None,
+    pnl_pct: float | None = None,    # realised P&L % (sell only)
+    reason: str = "",                # e.g. "stop-loss"
 ) -> bool:
     """
-    Rich signal alert for manual execution (or paper-mode review).
-    Called when a trade passes all gates (technical + news + risk + LLM).
+    Send a concise buy/sell trade notification to Slack.
+    This is the only notification the agent sends to Slack — no noise.
     """
-    side = decision.side.value.upper()
-    emoji = "🟢" if side == "BUY" else "🔴"
-    sep = "━" * 23
+    is_buy = side.lower() == "buy"
+    emoji  = "🟢" if is_buy else "🔴"
+    label  = "BUY" if is_buy else "SELL"
 
-    kelly_pct = f"{trade_pct:.0%}" if trade_pct else "—"
-    trade_value = analysis.close * decision.quantity if analysis.close and decision.quantity else 0
-    stop_line = (
-        f"Stop: ${stop_price:.2f} ({(stop_price - analysis.close) / analysis.close:+.1%})"
-        if stop_price else "Stop: ATR-based (pending)"
-    )
+    lines = [f"{emoji} *{label} {ticker}*"]
 
-    news_line = "—"
-    if news_ctx is not None:
-        sign = "+" if news_ctx.sentiment_score >= 0 else ""
-        news_line = f"{news_ctx.risk_level.upper()} ({sign}{news_ctx.sentiment_score:.2f})"
-        if news_ctx.flags:
-            news_line += f" [{', '.join(news_ctx.flags)}]"
+    if is_buy:
+        size_line = f"${price:.2f}"
+        if cash_pct is not None:
+            dollar_val = price * quantity
+            size_line += f"  ·  *{cash_pct:.0%} of cash*  (~${dollar_val:,.0f} · {quantity:.2f} sh)"
+        else:
+            size_line += f"  ·  {quantity:.2f} shares"
+        lines.append(size_line)
 
-    ml_line = (
-        f"{analysis.ml_confidence:.0%}" if analysis.ml_confidence is not None else "no model"
-    )
+        if stop_price:
+            stop_pct = (stop_price - price) / price
+            lines.append(f"Stop: ${stop_price:.2f}  ({stop_pct:+.1%})")
+    else:
+        sell_line = f"${price:.2f}  ·  {quantity:.2f} shares"
+        if reason:
+            sell_line += f"  ·  _{reason}_"
+        lines.append(sell_line)
 
-    lines = [
-        f"{emoji} *TRADE SIGNAL: {side} {analysis.ticker}*",
-        f"`{sep}`",
-        f"Entry: ${analysis.close:.2f}   {stop_line}",
-        f"Kelly size: {kelly_pct} → ~${trade_value:,.0f} ({decision.quantity:.2f} shares)",
-        f"RSI: {analysis.rsi:.0f} | MACD: {analysis.macd_hist:+.2f} | ADX: {analysis.ml_features.get('adx', 0):.0f}",
-        f"News: {news_line}",
-        f"ML confidence: {ml_line}",
-        f"_{decision.reasoning}_",
-    ]
-    return send("\n".join(lines))
+        if pnl_pct is not None:
+            sign = "+" if pnl_pct >= 0 else ""
+            lines.append(f"P&L: {sign}{pnl_pct:.2f}%")
+
+    return send_slack("\n".join(lines))

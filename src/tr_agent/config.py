@@ -18,9 +18,12 @@ class Settings(BaseSettings):
     max_trade_pct: float = 0.20       # max 20% of cash per trade
     max_invested_pct: float = 0.60    # max 60% of portfolio invested
 
-    # Telegram notifications
+    # Telegram notifications (legacy)
     telegram_token: str = Field(default="", repr=False)
     telegram_chat_id: str = Field(default="", repr=False)
+
+    # Slack notifications
+    slack_webhook_url: str = Field(default="", repr=False)
 
     # Trade Republic (iteration 2)
     tr_phone: str = Field(default="", repr=False)
