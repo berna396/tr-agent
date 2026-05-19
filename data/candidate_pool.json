@@ -1,0 +1,14 @@
+{
+  "equities": [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD",
+    "INTC", "QCOM", "CRM", "ADBE", "NFLX", "MU", "AMAT", "ORCL", "PYPL", "UBER",
+    "JPM", "BAC", "GS", "MS", "V", "MA", "AXP", "BLK",
+    "JNJ", "UNH", "LLY", "ABBV", "MRK", "PFE",
+    "WMT", "HD", "COST", "NKE", "MCD", "SBUX",
+    "XOM", "CVX", "COP", "SLB",
+    "BA", "CAT", "HON", "GE", "T", "VZ"
+  ],
+  "crypto": [
+    "BTC-USD", "ETH-USD"
+  ]
+}

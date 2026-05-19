@@ -70,23 +70,31 @@ def _fetch_intraday(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-def _intraday_trend(intraday_df: pd.DataFrame) -> tuple[Optional[str], Optional[float]]:
+def _intraday_trend(intraday_df: pd.DataFrame, ticker: str = "") -> tuple[Optional[str], Optional[float]]:
     """
-    Compute today's price direction from 15-min bars.
-    Compares today's first bar close to the most recent bar close.
-    Returns (trend, change_pct) or (None, None) if today's bars are unavailable.
+    Compute recent price direction from 15-min bars.
+    For equities: compares today's first bar to the latest bar.
+    For crypto (24/7): uses the last 48 bars as a rolling window (~12 hours).
     """
     if intraday_df.empty:
         return None, None
     try:
+        from tr_agent.assets import is_crypto
         close = intraday_df["Close"].squeeze()
-        idx = intraday_df.index
-        today = date.today()
-        today_mask = idx.date == today
-        if today_mask.sum() < 2:
-            return None, None
-        first = float(close[today_mask].iloc[0])
-        last = float(close[today_mask].iloc[-1])
+        if is_crypto(ticker):
+            if len(close) < 2:
+                return None, None
+            window = min(48, len(close))
+            first = float(close.iloc[-window])
+            last = float(close.iloc[-1])
+        else:
+            idx = intraday_df.index
+            today = date.today()
+            today_mask = idx.date == today
+            if today_mask.sum() < 2:
+                return None, None
+            first = float(close[today_mask].iloc[0])
+            last = float(close[today_mask].iloc[-1])
         change_pct = round((last - first) / first * 100, 2)
         trend = "up" if change_pct >= 0 else "down"
         return trend, change_pct
@@ -131,7 +139,7 @@ def analyze(ticker: str, timeframe: str = "1y") -> TechnicalAnalysis:
 
     # Intraday context — direction only, not used in signal logic
     intraday_df = _fetch_intraday(ticker)
-    trend, change_pct = _intraday_trend(intraday_df)
+    trend, change_pct = _intraday_trend(intraday_df, ticker=ticker)
     if trend:
         log.info(f"[Signal] {ticker}: intraday trend {trend} ({change_pct:+.2f}% from open)")
 

@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 
 import pandas as pd
 
-from tr_agent.guards import is_earnings_blackout
+from tr_agent.guards import is_earnings_blackout, days_until_earnings
 
 
 def _make_calendar(earnings_date: datetime) -> dict:
@@ -85,3 +85,14 @@ def test_returns_false_when_past_earnings_outside_days_after():
     with patch("yfinance.Ticker") as mock_ticker:
         mock_ticker.return_value.calendar = cal
         assert is_earnings_blackout("AAPL", days_before=3, days_after=1) is False
+
+
+# Crypto tickers bypass earnings checks entirely
+def test_crypto_earnings_blackout_always_false():
+    assert is_earnings_blackout("BTC-USD") is False
+    assert is_earnings_blackout("ETH-USDT") is False
+
+
+def test_crypto_days_until_earnings_returns_none():
+    assert days_until_earnings("BTC-USD") is None
+    assert days_until_earnings("ETH-USD") is None

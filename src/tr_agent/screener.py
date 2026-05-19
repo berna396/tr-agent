@@ -9,21 +9,43 @@ from tr_agent.signals.technical import Signal, TechnicalAnalysis
 
 log = logging.getLogger(__name__)
 
-CANDIDATE_POOL = [
-    # Tech
+_POOL_PATH = Path(__file__).parents[3] / "data" / "candidate_pool.json"
+
+# Fallback used only when candidate_pool.json is missing
+_EQUITY_FALLBACK = [
     "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD",
     "INTC", "QCOM", "CRM", "ADBE", "NFLX", "MU", "AMAT", "ORCL", "PYPL", "UBER",
-    # Finance
     "JPM", "BAC", "GS", "MS", "V", "MA", "AXP", "BLK",
-    # Health
     "JNJ", "UNH", "LLY", "ABBV", "MRK", "PFE",
-    # Consumer / Retail
     "WMT", "HD", "COST", "NKE", "MCD", "SBUX",
-    # Energy
     "XOM", "CVX", "COP", "SLB",
-    # Industrial / Other
     "BA", "CAT", "HON", "GE", "T", "VZ",
 ]
+
+
+def load_candidate_pool() -> list[str]:
+    """Load equity + crypto candidates from data/candidate_pool.json."""
+    try:
+        with open(_POOL_PATH) as f:
+            data = json.load(f)
+        equities = data.get("equities", _EQUITY_FALLBACK)
+        crypto = data.get("crypto", list(settings.crypto_watchlist))
+        return list(equities) + [c for c in crypto if c not in equities]
+    except Exception as e:
+        log.warning(f"[Screener] candidate_pool.json unreadable ({e}) — using fallback")
+        return list(_EQUITY_FALLBACK) + list(settings.crypto_watchlist)
+
+
+def save_candidate_pool(equities: list[str], crypto: list[str]) -> None:
+    """Persist the candidate pool back to disk (called by LLM discovery jobs)."""
+    _POOL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(_POOL_PATH, "w") as f:
+        json.dump({"equities": equities, "crypto": crypto}, f, indent=2)
+    log.info(f"[Screener] candidate_pool.json updated: {len(equities)} equities, {len(crypto)} crypto")
+
+
+# Keep module-level alias so existing imports (e.g. main.py screen command) don't break
+CANDIDATE_POOL = _EQUITY_FALLBACK
 
 
 def score_ticker(analysis: TechnicalAnalysis) -> float:
@@ -54,7 +76,8 @@ def score_ticker(analysis: TechnicalAnalysis) -> float:
 
 
 def _passes_filters(analysis: TechnicalAnalysis) -> bool:
-    if analysis.close < settings.screener_min_price:
+    from tr_agent.assets import is_crypto
+    if not is_crypto(analysis.ticker) and analysis.close < settings.screener_min_price:
         return False
     vol_ratio = analysis.ml_features.get("volume_ratio", 1.0)
     # volume_ratio < 0.1 likely means very low absolute volume; reject
@@ -71,7 +94,8 @@ def screen(
     Analyze every ticker in pool, score them, return top_n with a non-neutral signal.
     Never raises — returns DEFAULT_WATCHLIST on complete failure.
     """
-    pool = pool or CANDIDATE_POOL
+    if pool is None:
+        pool = load_candidate_pool()
     top_n = top_n or settings.screener_top_n
 
     scored: list[tuple[str, float, TechnicalAnalysis]] = []

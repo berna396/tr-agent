@@ -32,7 +32,7 @@ def refresh_watchlist(tickers: list[str] | None = None) -> None:
     log.info(f"[Screener] Watchlist updated: {', '.join(selected)}")
 
 
-def run_cycle(tickers: list[str] | None = None) -> None:
+def run_cycle(tickers: list[str] | None = None, regime_ticker: str = "SPY") -> None:
     if tickers is None:
         tickers = screener.load_active_watchlist(_WATCHLIST_PATH)
     else:
@@ -103,8 +103,8 @@ def run_cycle(tickers: list[str] | None = None) -> None:
         except Exception as e:
             log.error(f"[StopLoss] {sl_ticker}: {e}")
 
-    # Get market regime once per cycle (single SPY download)
-    regime = market_regime.get_regime()
+    # Get market regime once per cycle
+    regime = market_regime.get_regime(regime_ticker)
 
     for ticker in tickers:
         if ticker in stop_loss_sold:
@@ -246,6 +246,14 @@ def run_cycle(tickers: list[str] | None = None) -> None:
     )
 
 
+def run_crypto_cycle() -> None:
+    """Trading cycle for crypto assets — runs 24/7, uses BTC regime."""
+    tickers = settings.crypto_watchlist
+    if not tickers:
+        return
+    run_cycle(tickers=tickers, regime_ticker=settings.crypto_regime_ticker)
+
+
 def start(tickers: list[str] | None = None) -> None:
     logging.basicConfig(
         level=logging.INFO,
@@ -295,6 +303,15 @@ def start(tickers: list[str] | None = None) -> None:
         name="ML weekly analysis",
         misfire_grace_time=3600,
     )
+
+    if settings.crypto_watchlist:
+        scheduler.add_job(
+            run_crypto_cycle,
+            CronTrigger(minute="0,30"),  # every 30 min, 24/7
+            id="crypto_cycle",
+            name="Crypto trading cycle (24/7)",
+            misfire_grace_time=300,
+        )
 
     active = screener.load_active_watchlist(_WATCHLIST_PATH)
     log.info(f"Scheduler started — running every 30 min during NYSE hours (9:30–16:00 ET)")

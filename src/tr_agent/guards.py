@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 
 import yfinance as yf
 
+from tr_agent.assets import is_crypto
+
 log = logging.getLogger(__name__)
 
 
@@ -12,6 +14,8 @@ def days_until_earnings(ticker: str) -> int | None:
     Return integer days until the next earnings date, or None if unknown.
     Negative means earnings already passed. Never raises.
     """
+    if is_crypto(ticker):
+        return None
     try:
         cal = yf.Ticker(ticker).calendar
         if cal is None or not hasattr(cal, "get"):
@@ -40,6 +44,8 @@ def is_earnings_blackout(ticker: str, days_before: int = 3, days_after: int = 1)
     Returns True if we are within the earnings blackout window for this ticker.
     Always returns False on any data error — the default is to allow the trade.
     """
+    if is_crypto(ticker):
+        return False
     try:
         cal = yf.Ticker(ticker).calendar
         if cal is None:

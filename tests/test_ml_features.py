@@ -20,7 +20,7 @@ def _make_ohlcv(n: int = 100) -> pd.DataFrame:
 
 
 def test_feature_names_count():
-    assert len(FEATURE_NAMES) == 16
+    assert len(FEATURE_NAMES) == 20
 
 
 def test_compute_all_rows_returns_expected_columns():

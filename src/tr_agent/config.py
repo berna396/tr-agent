@@ -48,5 +48,9 @@ class Settings(BaseSettings):
     kelly_sizing: bool = True                 # use half-Kelly position sizing when stats available
     news_risk_gate: bool = True               # block BUY when news risk is "high" + sentiment < -0.5
 
+    # Crypto assets
+    crypto_watchlist: list[str] = ["BTC-USD", "ETH-USD"]
+    crypto_regime_ticker: str = "BTC-USD"     # replaces SPY for regime detection on crypto assets
+
 
 settings = Settings()

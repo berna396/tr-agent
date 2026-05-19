@@ -104,7 +104,8 @@ def screen(
     from tr_agent.scheduler import _WATCHLIST_PATH
 
     n = top_n or settings.screener_top_n
-    console.print(f"\n[bold green]Pre-market Screener[/bold green] | pool: {len(sc.CANDIDATE_POOL)} tickers → top {n}\n")
+    pool = sc.load_candidate_pool()
+    console.print(f"\n[bold green]Pre-market Screener[/bold green] | pool: {len(pool)} tickers → top {n}\n")
 
     selected = sc.screen(top_n=n)
 
