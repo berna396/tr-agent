@@ -108,7 +108,9 @@ def api_portfolio():
             prices = {}
             for t in positions:
                 try:
-                    prices[t] = float(yf_utils.ticker(t).fast_info.last_price)
+                    p = yf_utils.get_last_price(t)
+                    if p is not None:
+                        prices[t] = p
                 except Exception:
                     pass
         except Exception:
@@ -251,7 +253,7 @@ def api_equity():
         mkt_val = 0.0
         for ticker, pos in current_positions.items():
             try:
-                live_price = float(yf_utils.ticker(ticker).fast_info.last_price)
+                live_price = yf_utils.get_last_price(ticker) or pos["avg_price"]
             except Exception:
                 live_price = pos["avg_price"]
             mkt_val += pos["quantity"] * live_price

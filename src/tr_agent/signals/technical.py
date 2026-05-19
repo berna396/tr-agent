@@ -6,6 +6,7 @@ from typing import Optional
 import logging
 
 import pandas as pd
+import yfinance as yf
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, SMAIndicator
 
@@ -192,26 +193,24 @@ def _fetch_alternative_features(ticker: str, headlines: list[dict]) -> dict:
     except Exception:
         pass
     try:
-        t = yf_utils.ticker(ticker)
-        info = t.info or {}
+        info = yf_utils.get_ticker_attr(ticker, "info", default={}) or {}
         result["short_ratio"] = float(info.get("shortRatio") or 0.0)
     except Exception:
         pass
     try:
-        t = yf_utils.ticker(ticker)
-        expiries = t.options
+        expiries = yf_utils.get_ticker_attr(ticker, "options", default=())
         if expiries:
-            chain = t.option_chain(expiries[0])
-            calls, puts = chain.calls, chain.puts
-            call_vol = float(calls["volume"].fillna(0).sum())
-            put_vol  = float(puts["volume"].fillna(0).sum())
-            result["put_call_ratio"] = round(put_vol / call_vol, 4) if call_vol > 0 else 1.0
-            # IV rank: ATM call IV as a simple proxy (normalised to [0, 1] by dividing by 2.0)
-            if not calls.empty:
-                current_price = float(t.history(period="1d")["Close"].iloc[-1])
-                atm_calls = calls.iloc[(calls["strike"] - current_price).abs().argsort()[:1]]
-                raw_iv = float(atm_calls["impliedVolatility"].iloc[0]) if not atm_calls.empty else 0.0
-                result["iv_rank"] = round(min(raw_iv / 2.0, 1.0), 4)
+            chain = yf_utils.run_with_timeout(lambda: yf.Ticker(ticker).option_chain(expiries[0]))
+            if chain is not None:
+                calls, puts = chain.calls, chain.puts
+                call_vol = float(calls["volume"].fillna(0).sum())
+                put_vol  = float(puts["volume"].fillna(0).sum())
+                result["put_call_ratio"] = round(put_vol / call_vol, 4) if call_vol > 0 else 1.0
+                if not calls.empty:
+                    current_price = yf_utils.get_last_price(ticker) or 0.0
+                    atm_calls = calls.iloc[(calls["strike"] - current_price).abs().argsort()[:1]]
+                    raw_iv = float(atm_calls["impliedVolatility"].iloc[0]) if not atm_calls.empty else 0.0
+                    result["iv_rank"] = round(min(raw_iv / 2.0, 1.0), 4)
     except Exception:
         pass
     return result

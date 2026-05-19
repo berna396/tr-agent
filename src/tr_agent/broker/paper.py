@@ -28,8 +28,9 @@ class PaperBroker(BaseBroker):
         self._tracker: PortfolioTracker = persistence.load(initial_capital, self._state_path)
 
     def get_quote(self, ticker: str) -> Quote:
-        data = yf_utils.ticker(ticker).fast_info
-        price = float(data.last_price)
+        price = yf_utils.get_last_price(ticker)
+        if price is None:
+            raise ValueError(f"Could not fetch price for {ticker}")
         spread = price * 0.0005  # spread simulado de 0.05%
         return Quote(
             ticker=ticker,
@@ -81,7 +82,9 @@ class PaperBroker(BaseBroker):
         current_prices: dict[str, float] = {}
         for ticker in (tickers or list(self._tracker.get_portfolio().positions.keys())):
             try:
-                current_prices[ticker] = float(yf_utils.ticker(ticker).fast_info.last_price)
+                p = yf_utils.get_last_price(ticker)
+                if p is not None:
+                    current_prices[ticker] = p
             except Exception:
                 pass
         return self._tracker.get_metrics(current_prices)

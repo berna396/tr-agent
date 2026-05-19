@@ -36,7 +36,7 @@ def fetch_news(
     if cache_key not in _NEWS_CACHE:
         _NEWS_CACHE.clear()  # drop stale entries from previous days
         try:
-            raw = yf_utils.ticker(ticker).news or []
+            raw = yf_utils.get_ticker_attr(ticker, "news", default=[]) or []
         except Exception as e:
             log.debug(f"[News] {ticker}: fetch failed — {e}")
             return []
