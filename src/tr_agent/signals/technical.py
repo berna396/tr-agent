@@ -38,6 +38,8 @@ class TechnicalAnalysis:
     ml_available: bool = False
     ml_features: dict = field(default_factory=dict)
     sma_200: Optional[float] = None
+    intraday_trend: Optional[str] = None       # "up" / "down" / None if unavailable
+    intraday_change_pct: Optional[float] = None  # % change from today's first bar to now
 
     def to_dict(self) -> dict:
         return {
@@ -67,53 +69,71 @@ def _fetch_intraday(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+def _intraday_trend(intraday_df: pd.DataFrame) -> tuple[Optional[str], Optional[float]]:
+    """
+    Compute today's price direction from 15-min bars.
+    Compares today's first bar close to the most recent bar close.
+    Returns (trend, change_pct) or (None, None) if today's bars are unavailable.
+    """
+    if intraday_df.empty:
+        return None, None
+    try:
+        close = intraday_df["Close"].squeeze()
+        idx = intraday_df.index
+        today = date.today()
+        today_mask = idx.date == today
+        if today_mask.sum() < 2:
+            return None, None
+        first = float(close[today_mask].iloc[0])
+        last = float(close[today_mask].iloc[-1])
+        change_pct = round((last - first) / first * 100, 2)
+        trend = "up" if change_pct >= 0 else "down"
+        return trend, change_pct
+    except Exception:
+        return None, None
+
+
 def analyze(ticker: str, timeframe: str = "1y") -> TechnicalAnalysis:
     """
-    Descarga histórico diario de `ticker` (vía yfinance) y calcula RSI, MACD y SMAs.
+    Downloads daily OHLCV and computes RSI, MACD, SMAs — all from daily bars so
+    signals stay consistent with how the ML model was trained.
 
-    timeframe: periodo de descarga válido para yfinance (1mo, 3mo, 6mo, 1y).
-    Necesita al menos 50 velas para calcular SMA50.
-
-    Short-term indicators (RSI, MACD, SMA20, SMA50) are computed from 15-min intraday
-    bars when available, so signals reflect today's session rather than yesterday's close.
-    Long-term indicators (SMA200, all ML features) always use the daily bars.
+    Intraday 15-min bars are fetched separately and used only to compute today's
+    price trend (up/down vs open), which is injected into the LLM prompt as context.
     """
     df = yf.download(ticker, period=timeframe, interval="1d", progress=False, auto_adjust=True)
     if df.empty or len(df) < 50:
         raise ValueError(f"No hay suficientes datos para {ticker} (timeframe={timeframe})")
 
-    # Try intraday for signal indicators; fall back to daily if insufficient data
-    intraday_df = _fetch_intraday(ticker)
-    if len(intraday_df) >= 30:
-        signal_close = intraday_df["Close"].squeeze()
-        log.info(f"[Signal] {ticker}: using intraday 15m bars ({len(intraday_df)} rows)")
-    else:
-        signal_close = df["Close"].squeeze()
-        log.info(f"[Signal] {ticker}: falling back to daily bars (intraday rows={len(intraday_df)})")
+    close = df["Close"].squeeze()
 
-    rsi_val = float(RSIIndicator(close=signal_close, window=14).rsi().iloc[-1])
+    rsi_val = float(RSIIndicator(close=close, window=14).rsi().iloc[-1])
 
-    macd_ind = MACD(close=signal_close, window_slow=26, window_fast=12, window_sign=9)
+    macd_ind = MACD(close=close, window_slow=26, window_fast=12, window_sign=9)
     macd_val = float(macd_ind.macd().iloc[-1])
     macd_signal_val = float(macd_ind.macd_signal().iloc[-1])
     macd_hist_val = float(macd_ind.macd_diff().iloc[-1])
 
-    sma_20 = float(SMAIndicator(close=signal_close, window=20).sma_indicator().iloc[-1])
-    sma_50 = float(SMAIndicator(close=signal_close, window=50).sma_indicator().iloc[-1])
+    sma_20 = float(SMAIndicator(close=close, window=20).sma_indicator().iloc[-1])
+    sma_50 = float(SMAIndicator(close=close, window=50).sma_indicator().iloc[-1])
 
-    # SMA200 and ML features always from daily bars (need long history)
-    daily_close = df["Close"].squeeze()
-    sma_200_series = SMAIndicator(close=daily_close, window=200).sma_indicator()
+    sma_200_series = SMAIndicator(close=close, window=200).sma_indicator()
     sma_200_val = None if pd.isna(sma_200_series.iloc[-1]) else float(sma_200_series.iloc[-1])
 
-    signal, reasoning = _derive_signal(rsi_val, macd_hist_val, sma_20, sma_50, float(signal_close.iloc[-1]))
+    signal, reasoning = _derive_signal(rsi_val, macd_hist_val, sma_20, sma_50, float(close.iloc[-1]))
 
     ml_confidence, ml_available, ml_feats = _enrich_with_ml(df)
+
+    # Intraday context — direction only, not used in signal logic
+    intraday_df = _fetch_intraday(ticker)
+    trend, change_pct = _intraday_trend(intraday_df)
+    if trend:
+        log.info(f"[Signal] {ticker}: intraday trend {trend} ({change_pct:+.2f}% from open)")
 
     return TechnicalAnalysis(
         ticker=ticker,
         timeframe=timeframe,
-        close=float(signal_close.iloc[-1]),
+        close=float(close.iloc[-1]),
         rsi=rsi_val,
         macd=macd_val,
         macd_signal=macd_signal_val,
@@ -126,6 +146,8 @@ def analyze(ticker: str, timeframe: str = "1y") -> TechnicalAnalysis:
         ml_confidence=ml_confidence,
         ml_available=ml_available,
         ml_features=ml_feats,
+        intraday_trend=trend,
+        intraday_change_pct=change_pct,
     )
 
 

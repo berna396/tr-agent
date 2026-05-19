@@ -54,6 +54,11 @@ def confirm_trade(
     else:
         sma200_context = ""
 
+    if analysis.intraday_trend is not None:
+        intraday_context = f"\n- Intraday trend: price is {analysis.intraday_trend} {analysis.intraday_change_pct:+.2f}% from today's open"
+    else:
+        intraday_context = ""
+
     news_block = news_section(ticker_news)
     rules_block = learned_rules
 
@@ -63,7 +68,7 @@ Technical indicators:
 - RSI(14): {analysis.rsi:.1f}
 - MACD histogram: {analysis.macd_hist:.4f}
 - SMA20: {analysis.sma_20:.2f} | SMA50: {analysis.sma_50:.2f}{sma200_str}
-- Current price: ${analysis.close:.2f}{sma200_context}
+- Current price: ${analysis.close:.2f}{sma200_context}{intraday_context}
 - Analysis: {analysis.reasoning}
 - {ml_confidence_line(analysis.ml_confidence, analysis.ml_available)}
 - {regime_line(regime)}
