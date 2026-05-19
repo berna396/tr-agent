@@ -1,3 +1,5 @@
+from pathlib import Path
+
 SYSTEM_PROMPT = """You are a conservative trading risk advisor. Your job is to review a trading signal
 and decide whether it's strong enough to act on given the current portfolio state.
 
@@ -7,6 +9,7 @@ Rules you must enforce:
 - Be conservative: when in doubt, reject
 - Quantity must not exceed the max_quantity provided by the risk manager
 - When an ML confidence score is provided, use it as additional evidence (above 60% supports the trade, below 40% is a warning)
+- When learned rules are provided, apply them — they reflect real past performance
 
 Respond ONLY in valid JSON with this exact structure:
 {"confirmed": true/false, "quantity": <float or 0 if rejected>, "reasoning": "<one sentence>"}"""
@@ -28,3 +31,30 @@ def ml_confidence_line(ml_confidence: float | None, ml_available: bool, n_sample
         return "ML model: bootstrapping — run 'tr-agent ml bootstrap' to train"
     label = "supports trade" if ml_confidence >= 0.6 else ("neutral" if ml_confidence >= 0.4 else "warns against trade")
     return f"ML model confidence: {ml_confidence:.0%} probability of profitable outcome ({label}; trained on {n_samples} samples)"
+
+
+def news_section(news_items: list[dict]) -> str:
+    """Format recent news headlines for the LLM prompt. Returns '' if no items."""
+    if not news_items:
+        return ""
+    lines = ["Recent news:"]
+    for item in news_items:
+        pub = f" ({item['publisher']}, {item['age_str']})" if item.get("publisher") else f" ({item['age_str']})"
+        lines.append(f'- "{item["title"]}"{pub}')
+    return "\n".join(lines)
+
+
+def rules_section(rules_path: Path) -> str:
+    """Load learned rules from file for prompt injection. Returns '' if no file yet."""
+    try:
+        if not rules_path.exists():
+            return ""
+        content = rules_path.read_text().strip()
+        if not content:
+            return ""
+        # Cap at 2000 chars to protect the model's context window
+        if len(content) > 2000:
+            content = content[:2000] + "\n[rules truncated]"
+        return f"Learned rules (from past performance):\n{content}"
+    except Exception:
+        return ""

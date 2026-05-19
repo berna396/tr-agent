@@ -6,12 +6,14 @@ from typing import Optional
 
 import ollama
 
-from tr_agent.agent.prompts import SYSTEM_PROMPT, ml_confidence_line, regime_line
+from tr_agent.agent.prompts import SYSTEM_PROMPT, ml_confidence_line, news_section, regime_line, rules_section
 from tr_agent.broker.base import OrderSide, Portfolio
 from tr_agent.config import settings
-from tr_agent import memory
+from tr_agent import memory, news as news_mod
 from tr_agent.risk import RiskCheck
 from tr_agent.signals.technical import TechnicalAnalysis
+
+_RULES_PATH = Path(__file__).parents[3] / "data" / "llm_rules.md"
 
 log = logging.getLogger(__name__)
 
@@ -42,12 +44,18 @@ def confirm_trade(
         **({"path": journal_path} if journal_path else {}),
     )
 
+    ticker_news = news_mod.fetch_news(analysis.ticker)
+    learned_rules = rules_section(_RULES_PATH)
+
     sma200_str = f" | SMA200: {analysis.sma_200:.2f}" if analysis.sma_200 is not None else ""
     if analysis.sma_200 is not None:
         lt_trend = "above" if analysis.close > analysis.sma_200 else "below"
         sma200_context = f"\n- Long-term trend: price is {lt_trend} SMA200 (${analysis.sma_200:.2f})"
     else:
         sma200_context = ""
+
+    news_block = news_section(ticker_news)
+    rules_block = learned_rules
 
     prompt = f"""Signal: {analysis.signal.upper()} on {analysis.ticker}
 
@@ -59,7 +67,7 @@ Technical indicators:
 - Analysis: {analysis.reasoning}
 - {ml_confidence_line(analysis.ml_confidence, analysis.ml_available)}
 - {regime_line(regime)}
-
+{f"{chr(10)}{news_block}" if news_block else ""}
 Risk check:
 - Max quantity allowed: {risk_check.max_quantity:.4f} shares
 - Reason: {risk_check.reason}
@@ -67,9 +75,13 @@ Risk check:
 Portfolio:
 - Cash available: ${portfolio.cash:,.2f}
 - Open positions: {positions_summary if positions_summary else "none"}
-{f"{chr(10)}{memory_context}" if memory_context else ""}
+{f"{chr(10)}{memory_context}" if memory_context else ""}{f"{chr(10)}{rules_block}" if rules_block else ""}
 Should we execute this {analysis.signal} trade?"""
 
+    if ticker_news:
+        log.info(f"[LLM] {analysis.ticker}: {len(ticker_news)} news headline(s) injected")
+    if learned_rules:
+        log.info(f"[LLM] {analysis.ticker}: learned rules injected ({len(learned_rules)} chars)")
     log.info(f"[LLM] Asking for confirmation on {analysis.ticker} {analysis.signal}...")
 
     try:

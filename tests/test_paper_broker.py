@@ -91,3 +91,33 @@ def test_portfolio_tracker_avg_price():
     pos = tracker.get_portfolio().positions["AAPL"]
     assert pos.quantity == 20.0
     assert pos.avg_price == pytest.approx(110.0)
+
+
+def test_buy_stores_stop_price(broker):
+    with patch.object(broker, "get_quote", return_value=_make_quote("AAPL", 100.0)):
+        broker.place_order("AAPL", OrderSide.BUY, 5.0, stop_price=95.0)
+
+    pos = broker.get_portfolio().positions["AAPL"]
+    assert pos.stop_price == pytest.approx(95.0)
+
+
+def test_stop_price_none_by_default(broker):
+    with patch.object(broker, "get_quote", return_value=_make_quote("AAPL", 100.0)):
+        broker.place_order("AAPL", OrderSide.BUY, 5.0)
+
+    pos = broker.get_portfolio().positions["AAPL"]
+    assert pos.stop_price is None
+
+
+def test_stop_price_persisted_and_loaded(broker, tmp_path):
+    with patch.object(broker, "get_quote", return_value=_make_quote("NVDA", 500.0)):
+        broker.place_order("NVDA", OrderSide.BUY, 2.0, stop_price=480.0)
+
+    # Reload from disk
+    broker2 = PaperBroker(
+        initial_capital=10_000.0,
+        slippage=0.001,
+        state_path=broker._state_path,
+    )
+    pos = broker2.get_portfolio().positions["NVDA"]
+    assert pos.stop_price == pytest.approx(480.0)

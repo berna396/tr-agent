@@ -10,6 +10,7 @@ log = logging.getLogger(__name__)
 _DB_PATH = Path(__file__).parents[3] / "data" / "journal.db"
 _MODEL_PATH = Path(__file__).parents[3] / "data" / "models" / "signal_model.pkl"
 _HISTORY_PATH = Path(__file__).parents[3] / "data" / "models" / "training_history.json"
+_RULES_PATH = Path(__file__).parents[3] / "data" / "llm_rules.md"
 
 
 def daily_ml_check(tickers: list[str] | None = None) -> None:
@@ -64,6 +65,12 @@ def weekly_analysis(tickers: list[str] | None = None) -> None:
     insights = analyzer.generate_ollama_insights(
         settings.ollama_model, report, shap
     )
+
+    rules_md = analyzer.generate_rules_md(settings.ollama_model, report, shap)
+    _RULES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _RULES_PATH.write_text(rules_md)
+    log.info(f"[ML] LLM rules updated → {_RULES_PATH}")
+
     message = analyzer.format_telegram_message(report, insights)
 
     from tr_agent import notifier

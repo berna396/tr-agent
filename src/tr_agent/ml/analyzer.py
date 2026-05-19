@@ -242,6 +242,95 @@ Analyze what patterns are working, whether RSI entry thresholds are well-calibra
         return f"Insight generation unavailable: {e}"
 
 
+def generate_rules_md(
+    ollama_model: str,
+    report: dict,
+    shap_importances: dict[str, float],
+) -> str:
+    """
+    Ask Ollama to synthesize performance stats into structured, actionable rules
+    for the LLM confirmation agent. Returns a markdown string to be saved as
+    data/llm_rules.md and injected into future trade confirmation prompts.
+    """
+    import ollama
+
+    if report.get("total_trades", 0) == 0:
+        from datetime import date
+        return f"## Learned Rules (generated {date.today()} · no trades yet)\n\nNo completed trades. Rules will be generated after the first closed positions."
+
+    ticker_lines = "\n".join(
+        f"  {t}: {d['trades']} trades, {d['win_rate']}% win rate, avg {d['avg_pnl_pct']:+.2f}%"
+        for t, d in report.get("by_ticker", {}).items()
+    ) or "  No per-ticker data"
+
+    rsi_quality = report.get("rsi_entry_quality", {})
+    rsi_lines = "\n".join(
+        f"  RSI {b}: {d['trades']} trades, {d.get('win_rate', 0)}% win rate, avg {d.get('avg_pnl_pct', 0):+.2f}%"
+        for b, d in rsi_quality.items() if d.get("trades", 0) > 0
+    ) or "  Not enough data"
+
+    sl = report.get("stop_loss_analysis", {})
+    sl_line = (
+        f"  {sl.get('stop_loss_exits', 0)}/{sl.get('total_sells', 0)} exits were stop-losses "
+        f"({sl.get('stop_loss_rate_pct', 0)}%), avg loss {sl.get('avg_stop_loss_pct', 0):+.2f}%"
+        if sl else "  Not available"
+    )
+
+    shap_lines = "\n".join(
+        f"  {i+1}. {feat}: {imp:.4f}"
+        for i, (feat, imp) in enumerate(list(shap_importances.items())[:5])
+    ) or "  Not available"
+
+    from datetime import date
+    prompt = f"""You are analyzing a paper trading agent's 30-day performance to generate concise, actionable rules.
+These rules will be injected into the agent's LLM trade confirmation prompt each time it evaluates a new signal.
+Write rules the LLM can directly apply to improve future decisions.
+
+PERFORMANCE DATA ({report.get('days', 30)} days, {report.get('total_trades', 0)} trades):
+  Overall win rate: {report.get('win_rate', 0)}%
+  Total P&L: ${report.get('total_pnl', 0):+.2f}
+  Avg return: {report.get('avg_pnl_pct', 0):+.2f}%
+  Best: {report.get('best_trade_pct', 0):+.2f}% | Worst: {report.get('worst_trade_pct', 0):+.2f}%
+
+BY TICKER:
+{ticker_lines}
+
+RSI ENTRY QUALITY:
+{rsi_lines}
+
+STOP-LOSS ANALYSIS:
+{sl_line}
+
+TOP SHAP FEATURES:
+{shap_lines}
+
+Generate a rules file with EXACTLY this markdown structure — keep each rule to one line, max 10 rules total:
+
+## Learned Rules (generated {date.today()} · {report.get('total_trades', 0)} trades · {report.get('days', 30)}-day window)
+
+### What's working:
+- [rule based on data]
+
+### What to avoid:
+- [rule based on data]
+
+### Suggested constraints:
+- [specific, actionable constraint for the LLM to apply]
+
+Be specific and data-driven. Reference actual percentages from the data above."""
+
+    try:
+        response = ollama.chat(
+            model=ollama_model,
+            messages=[{"role": "user", "content": prompt}],
+            options={"temperature": 0.3},
+        )
+        return response["message"]["content"].strip()
+    except Exception as e:
+        log.error(f"[ML] Rules generation failed: {e}")
+        return f"## Learned Rules\n\nRules generation unavailable: {e}"
+
+
 def format_telegram_message(
     report: dict,
     insights: str,

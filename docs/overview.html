@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tr-agent — System Overview</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --bg2: #1a1d27;
+    --bg3: #22263a;
+    --border: #2e3352;
+    --accent: #5b8af5;
+    --accent2: #7c5bf5;
+    --green: #3ecf8e;
+    --red: #f5604a;
+    --yellow: #f5c842;
+    --orange: #f5904a;
+    --text: #e2e8f0;
+    --muted: #8892a4;
+    --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.6; }
+
+  /* Layout */
+  .page { max-width: 1100px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 2rem; font-weight: 700; letter-spacing: -0.5px; }
+  h2 { font-size: 1.25rem; font-weight: 600; margin-bottom: 16px; color: var(--text); }
+  h3 { font-size: 1rem; font-weight: 600; margin-bottom: 8px; }
+  p { color: var(--muted); margin-bottom: 8px; }
+  section { margin-bottom: 48px; }
+
+  /* Header */
+  .header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  .badge { background: var(--accent); color: #fff; font-size: 0.7rem; font-weight: 700; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; }
+  .subtitle { color: var(--muted); font-size: 1rem; margin-bottom: 40px; }
+
+  /* Cards */
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; }
+  .card-grid { display: grid; gap: 16px; }
+  .card-grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .card-grid-3 { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+
+  /* Timeline */
+  .timeline { display: flex; flex-direction: column; gap: 0; }
+  .timeline-item { display: flex; gap: 0; }
+  .timeline-time { width: 120px; flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; padding-right: 20px; padding-top: 4px; }
+  .timeline-time .time { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); font-weight: 600; }
+  .timeline-time .days { font-size: 0.68rem; color: var(--muted); }
+  .timeline-spine { display: flex; flex-direction: column; align-items: center; width: 20px; flex-shrink: 0; }
+  .timeline-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); margin-top: 6px; flex-shrink: 0; }
+  .timeline-line { width: 2px; background: var(--border); flex-grow: 1; margin-top: 4px; }
+  .timeline-item:last-child .timeline-line { display: none; }
+  .timeline-body { flex: 1; padding: 0 0 28px 20px; }
+  .timeline-body .title { font-weight: 600; font-size: 0.95rem; margin-bottom: 4px; }
+  .timeline-body .desc { color: var(--muted); font-size: 0.88rem; }
+
+  /* Pipeline */
+  .pipeline { display: flex; flex-direction: column; gap: 0; }
+  .stage { display: flex; gap: 20px; align-items: flex-start; position: relative; padding-bottom: 0; }
+  .stage-connector { display: flex; flex-direction: column; align-items: center; flex-shrink: 0; width: 40px; }
+  .stage-num { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.85rem; flex-shrink: 0; }
+  .stage-arrow { width: 2px; height: 28px; background: var(--border); margin: 0 auto; }
+  .stage:last-child .stage-arrow { display: none; }
+  .stage-body { flex: 1; background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; margin-bottom: 28px; }
+  .stage-body h3 { font-size: 0.95rem; margin-bottom: 6px; }
+  .stage-rule { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; }
+  .stage-rule .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); margin-top: 7px; flex-shrink: 0; }
+  .stage-rule p { margin: 0; font-size: 0.85rem; }
+
+  /* Color helpers */
+  .c-blue { color: var(--accent); }
+  .c-green { color: var(--green); }
+  .c-red { color: var(--red); }
+  .c-yellow { color: var(--yellow); }
+  .c-orange { color: var(--orange); }
+  .c-purple { color: var(--accent2); }
+  .bg-blue { background: rgba(91,138,245,0.12); border-color: rgba(91,138,245,0.35); }
+  .bg-green { background: rgba(62,207,142,0.1); border-color: rgba(62,207,142,0.3); }
+  .bg-red { background: rgba(245,96,74,0.1); border-color: rgba(245,96,74,0.3); }
+  .bg-yellow { background: rgba(245,200,66,0.1); border-color: rgba(245,200,66,0.3); }
+  .bg-orange { background: rgba(245,144,74,0.1); border-color: rgba(245,144,74,0.3); }
+  .bg-purple { background: rgba(124,91,245,0.1); border-color: rgba(124,91,245,0.3); }
+
+  /* Feature table */
+  table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+  th { background: var(--bg3); color: var(--muted); font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+  td { padding: 8px 12px; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .mono { font-family: var(--mono); font-size: 0.82rem; }
+
+  /* Stat chips */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .chip { background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 0.8rem; }
+  .chip span { color: var(--muted); font-size: 0.75rem; }
+
+  /* Section label */
+  .section-label { font-size: 0.72rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); margin-bottom: 12px; }
+
+  /* Gate */
+  .gate { display: flex; align-items: center; gap: 10px; background: var(--bg3); border-radius: 8px; padding: 10px 14px; margin-top: 10px; font-size: 0.85rem; }
+  .gate-icon { font-size: 1rem; }
+
+  /* Ticker grid */
+  .ticker-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .ticker { background: var(--bg3); border: 1px solid var(--border); border-radius: 5px; padding: 3px 8px; font-family: var(--mono); font-size: 0.78rem; }
+
+  /* Data files */
+  .file-list { display: flex; flex-direction: column; gap: 8px; }
+  .file-row { display: flex; gap: 12px; align-items: flex-start; }
+  .file-name { font-family: var(--mono); font-size: 0.8rem; color: var(--accent); min-width: 220px; flex-shrink: 0; }
+  .file-desc { font-size: 0.85rem; color: var(--muted); }
+
+  /* Stack */
+  .stack-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+  .stack-item { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .stack-item .layer { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .stack-item .tech { font-size: 0.9rem; font-weight: 600; }
+
+  /* Divider */
+  hr { border: none; border-top: 1px solid var(--border); margin: 48px 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>tr-agent</h1>
+    <span class="badge">v0.6</span>
+  </div>
+  <p class="subtitle">A local AI paper-trading agent that runs entirely on your machine — no cloud, no subscriptions.</p>
+
+  <!-- What it does -->
+  <section>
+    <div class="section-label">How it works</div>
+    <div class="card">
+      <p style="color:var(--text); font-size:0.95rem;">
+        Every trading day, the agent scans <strong>48 large-cap stocks</strong>, selects the best setups each morning, then paper-trades them every 30 minutes through a <strong>4-stage pipeline</strong>: technical signals → risk check → LLM confirmation → order execution. A LightGBM model runs in the background, learning from every closed trade and improving its confidence scores over time.
+      </p>
+      <div class="chips">
+        <div class="chip">48 candidates <span>screened daily</span></div>
+        <div class="chip">12 watchlist <span>per day</span></div>
+        <div class="chip">30 min <span>cycle interval</span></div>
+        <div class="chip">16 ML features <span>per signal</span></div>
+        <div class="chip">Paper mode <span>no real money</span></div>
+        <div class="chip">100% local <span>Ollama + SQLite</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Daily Schedule -->
+  <section>
+    <div class="section-label">Daily Schedule (US Eastern time)</div>
+    <div class="timeline">
+
+      <div class="timeline-item">
+        <div class="timeline-time"><span class="time">9:00 AM</span><span class="days">Mon–Fri</span></div>
+        <div class="timeline-spine"><div class="timeline-dot" style="background:var(--accent2)"></div><div class="timeline-line"></div></div>
+        <div class="timeline-body">
+          <div class="title c-purple">ML Daily Check</div>
+          <div class="desc">Counts new closed trades since last training run. If ≥10 new trades → retrain LightGBM → deploy new model version if CV AUC &gt; 0.40.</div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-time"><span class="time">9:15 AM</span><span class="days">Mon–Fri</span></div>
+        <div class="timeline-spine"><div class="timeline-dot" style="background:var(--yellow)"></div><div class="timeline-line"></div></div>
+        <div class="timeline-body">
+          <div class="title c-yellow">Pre-Market Screener</div>
+          <div class="desc">Scores all 48 tickers on signal quality, trend, volume and ML confidence. Picks top 12. Saves to <span class="mono">active_watchlist.json</span>. Sends watchlist to Telegram.</div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-time"><span class="time">9:30–16:00</span><span class="days">Mon–Fri</span></div>
+        <div class="timeline-spine"><div class="timeline-dot" style="background:var(--green)"></div><div class="timeline-line"></div></div>
+        <div class="timeline-body">
+          <div class="title c-green">Trading Cycle <span style="font-weight:400; color:var(--muted)">— every 30 min</span></div>
+          <div class="desc">For each ticker in today's watchlist: runs the full 4-stage pipeline. Sends Telegram alerts on orders and stop-loss triggers.</div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-time"><span class="time">10:00 AM</span><span class="days">Sunday</span></div>
+        <div class="timeline-spine"><div class="timeline-dot" style="background:var(--orange)"></div><div class="timeline-line"></div></div>
+        <div class="timeline-body">
+          <div class="title c-orange">Weekly ML Analysis</div>
+          <div class="desc">Aggregates 30 days of trade outcomes. Runs SHAP feature importance. Checks RSI entry quality and stop-loss rate. Sends Ollama-generated narrative to Telegram.</div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- Pipeline -->
+  <section>
+    <div class="section-label">Trading Pipeline — per ticker, per cycle</div>
+    <div class="pipeline">
+
+      <div class="stage">
+        <div class="stage-connector">
+          <div class="stage-num bg-red" style="color:var(--red); border:1px solid rgba(245,96,74,0.4)">0</div>
+          <div class="stage-arrow"></div>
+        </div>
+        <div class="stage-body">
+          <h3 class="c-red">Stop-Loss Enforcement</h3>
+          <p style="font-size:0.85rem; color:var(--muted)">Runs before everything else on every open position.</p>
+          <div class="stage-rule"><div class="dot"></div><p>Fetch current price for the held position.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>If loss ≥ 5% from entry price → sell immediately, bypassing the rest of the pipeline.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Send Telegram alert, skip ticker for the rest of this cycle.</p></div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-connector">
+          <div class="stage-num bg-blue" style="color:var(--accent); border:1px solid rgba(91,138,245,0.4)">1</div>
+          <div class="stage-arrow"></div>
+        </div>
+        <div class="stage-body">
+          <h3 class="c-blue">Signal Detection <span style="font-size:0.8rem; font-weight:400; color:var(--muted)">(pure Python)</span></h3>
+          <p style="font-size:0.85rem; color:var(--muted)">Fetches 1 year of daily OHLCV from yfinance, computes indicators, derives a signal.</p>
+          <div class="stage-rule"><div class="dot"></div><p><strong>RSI(14)</strong>, <strong>MACD(12/26/9)</strong>, <strong>SMA(20/50/200)</strong>, ATR, Bollinger Bands, ADX, ROC, volume ratio.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Queries LightGBM → <strong>ml_confidence</strong> (0–1 probability of profitable outcome).</p></div>
+          <div class="stage-rule"><div class="dot"></div><p><strong>BUY</strong> when ≥2 of: RSI &lt; 30 · MACD histogram &gt; 0 · SMA20 &gt; SMA50.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p><strong>SELL</strong> when ≥2 of: RSI &gt; 70 · MACD histogram &lt; 0 · SMA20 &lt; SMA50. Otherwise NEUTRAL.</p></div>
+
+          <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+            <h3 style="font-size:0.85rem; color:var(--muted); margin-bottom:8px;">Stage 1b — BUY Guards (applied before risk check)</h3>
+            <div class="stage-rule"><div class="dot" style="background:var(--yellow)"></div><p><strong class="c-yellow">Market regime:</strong> if SPY SMA50 &lt; SMA200 (death cross) → suppress BUY.</p></div>
+            <div class="stage-rule"><div class="dot" style="background:var(--yellow)"></div><p><strong class="c-yellow">Earnings blackout:</strong> if earnings within 3 days → suppress BUY. Fails closed on API error.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-connector">
+          <div class="stage-num bg-orange" style="color:var(--orange); border:1px solid rgba(245,144,74,0.4)">2</div>
+          <div class="stage-arrow"></div>
+        </div>
+        <div class="stage-body">
+          <h3 class="c-orange">Risk Check <span style="font-size:0.8rem; font-weight:400; color:var(--muted)">(pure Python)</span></h3>
+          <div class="stage-rule"><div class="dot"></div><p>Max <strong>20% of cash</strong> per single trade.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Max <strong>60% of portfolio</strong> invested at any one time.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>SELL requires an open position in that ticker.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Rejections trigger a Telegram alert; ticker is skipped for this cycle.</p></div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-connector">
+          <div class="stage-num bg-purple" style="color:var(--accent2); border:1px solid rgba(124,91,245,0.4)">3</div>
+          <div class="stage-arrow"></div>
+        </div>
+        <div class="stage-body">
+          <h3 class="c-purple">LLM Confirmation <span style="font-size:0.8rem; font-weight:400; color:var(--muted)">(Ollama · qwen2.5:7b)</span></h3>
+          <p style="font-size:0.85rem; color:var(--muted)">The LLM receives full context and decides whether to confirm, modify, or reject the signal.</p>
+          <div class="stage-rule"><div class="dot"></div><p><strong>Input:</strong> signal type · all indicators (incl. SMA200) · ML confidence · market regime (golden/death cross) · portfolio state · recent trade history.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p><strong>Output:</strong> JSON <span class="mono">{confirmed, quantity, reasoning}</span>.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Conservative by design — rejects anything ambiguous. ML confidence shown as "supports/warns against trade."</p></div>
+          <div class="gate">
+            <span class="gate-icon">🟢</span>
+            <span>ML &gt; 60%: "supports trade" &nbsp;&nbsp; 🟡 40–60%: neutral &nbsp;&nbsp; 🔴 &lt; 40%: "warns against trade"</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-connector">
+          <div class="stage-num bg-green" style="color:var(--green); border:1px solid rgba(62,207,142,0.3)">4</div>
+          <div class="stage-arrow"></div>
+        </div>
+        <div class="stage-body">
+          <h3 class="c-green">Order Execution <span style="font-size:0.8rem; font-weight:400; color:var(--muted)">(PaperBroker)</span></h3>
+          <div class="stage-rule"><div class="dot"></div><p>Fill at current market price ± 0.1% slippage simulation.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Persist to <span class="mono">data/portfolio_state.json</span>.</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Log every event to <span class="mono">data/journal.db</span> (SQLite).</p></div>
+          <div class="stage-rule"><div class="dot"></div><p>Send Telegram notification with P&amp;L summary.</p></div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- ML Layer -->
+  <section>
+    <div class="section-label">ML Layer</div>
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h3 style="margin-bottom:12px">LightGBM Binary Classifier</h3>
+        <p style="font-size:0.88rem;">Predicts whether current market conditions will produce a profitable trade. Trained on 2 years of historical OHLCV, then continuously updated as live paper trades close.</p>
+        <div class="chips" style="margin-top:12px">
+          <div class="chip">v2 <span>current model</span></div>
+          <div class="chip">AUC 0.453 <span>deployed</span></div>
+          <div class="chip">480 samples <span>training set</span></div>
+          <div class="chip">AUC gate: 0.40 <span>deploy threshold</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:12px">Training Loop</h3>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;">Bootstrap: 2 years of history across 5+ tickers (~480 labeled samples).</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;">Retrains automatically when ≥10 new closed live trades since last run.</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;">Hyperparameters tuned via GridSearchCV + TimeSeriesSplit on every run.</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;">Walk-forward CV (no data leakage). Deploys only if AUC &gt; 0.40.</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;">Last 3 model versions kept as versioned .pkl files.</p></div>
+      </div>
+    </div>
+
+    <div style="margin-top:16px">
+      <div class="card">
+        <h3 style="margin-bottom:14px">16 Features per Signal</h3>
+        <table>
+          <thead><tr><th>Category</th><th>Features</th></tr></thead>
+          <tbody>
+            <tr><td><strong>Momentum</strong></td><td class="mono">rsi · macd · macd_hist · macd_signal · roc_5 · roc_10 · roc_20</td></tr>
+            <tr><td><strong>Trend</strong></td><td class="mono">sma_ratio (SMA20/SMA50) · adx</td></tr>
+            <tr><td><strong>Volatility</strong></td><td class="mono">atr_pct · bb_position · bb_width</td></tr>
+            <tr><td><strong>Volume</strong></td><td class="mono">volume_ratio (vol / 20d avg)</td></tr>
+            <tr><td><strong>Time</strong></td><td class="mono">day_of_week</td></tr>
+            <tr><td><strong>Market-relative</strong></td><td class="mono">rel_roc_5 (ticker ROC5 − SPY ROC5) · spy_corr_60 (60-day β to SPY)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- Screener -->
+  <section>
+    <div class="section-label">Pre-Market Screener</div>
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h3 style="margin-bottom:12px">Scoring (0 – 5.5 per ticker)</h3>
+        <table>
+          <thead><tr><th>Condition</th><th>Score</th></tr></thead>
+          <tbody>
+            <tr><td>Signal fires (BUY or SELL)</td><td class="c-green">+2.0</td></tr>
+            <tr><td>ADX &gt; 25 (trending, not choppy)</td><td class="c-green">+1.0</td></tr>
+            <tr><td>Volume ratio &gt; 1.2 (above-average interest)</td><td class="c-green">+1.0</td></tr>
+            <tr><td>ML confidence &gt; 55%</td><td class="c-green">+1.0</td></tr>
+            <tr><td>RSI extreme (&lt; 30 or &gt; 70)</td><td class="c-green">+0.5</td></tr>
+            <tr><td>ML confidence &lt; 40%</td><td class="c-red">−0.5</td></tr>
+          </tbody>
+        </table>
+        <p style="font-size:0.8rem; margin-top:10px;">If no ticker fires a signal, the screener returns an empty watchlist rather than picking neutral noise.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:12px">48-Ticker Candidate Pool</h3>
+        <div style="margin-bottom:10px">
+          <div class="section-label" style="margin-bottom:4px">Tech</div>
+          <div class="ticker-grid">
+            <span class="ticker">AAPL</span><span class="ticker">MSFT</span><span class="ticker">GOOGL</span><span class="ticker">AMZN</span><span class="ticker">META</span><span class="ticker">NVDA</span><span class="ticker">TSLA</span><span class="ticker">AMD</span><span class="ticker">INTC</span><span class="ticker">QCOM</span><span class="ticker">CRM</span><span class="ticker">ADBE</span><span class="ticker">NFLX</span><span class="ticker">MU</span><span class="ticker">AMAT</span><span class="ticker">ORCL</span><span class="ticker">PYPL</span><span class="ticker">UBER</span>
+          </div>
+        </div>
+        <div style="margin-bottom:10px">
+          <div class="section-label" style="margin-bottom:4px">Finance · Health · Consumer</div>
+          <div class="ticker-grid">
+            <span class="ticker">JPM</span><span class="ticker">BAC</span><span class="ticker">GS</span><span class="ticker">MS</span><span class="ticker">V</span><span class="ticker">MA</span><span class="ticker">AXP</span><span class="ticker">BLK</span><span class="ticker">JNJ</span><span class="ticker">UNH</span><span class="ticker">LLY</span><span class="ticker">ABBV</span><span class="ticker">MRK</span><span class="ticker">PFE</span><span class="ticker">WMT</span><span class="ticker">HD</span><span class="ticker">COST</span><span class="ticker">NKE</span><span class="ticker">MCD</span><span class="ticker">SBUX</span>
+          </div>
+        </div>
+        <div>
+          <div class="section-label" style="margin-bottom:4px">Energy · Industrial</div>
+          <div class="ticker-grid">
+            <span class="ticker">XOM</span><span class="ticker">CVX</span><span class="ticker">COP</span><span class="ticker">SLB</span><span class="ticker">BA</span><span class="ticker">CAT</span><span class="ticker">HON</span><span class="ticker">GE</span><span class="ticker">T</span><span class="ticker">VZ</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- Data files -->
+  <section>
+    <div class="section-label">Data Files (all in data/ — gitignored)</div>
+    <div class="card">
+      <div class="file-list">
+        <div class="file-row"><span class="file-name">journal.db</span><span class="file-desc">SQLite. Every signal, risk check, LLM decision, and closed trade outcome with P&amp;L. Source of truth for ML training and weekly analysis.</span></div>
+        <div class="file-row"><span class="file-name">portfolio_state.json</span><span class="file-desc">Paper portfolio: cash balance, open positions, full trade history.</span></div>
+        <div class="file-row"><span class="file-name">active_watchlist.json</span><span class="file-desc">Today's screener picks. Refreshed at 9:15 AM ET. The trading cycle reads from this file.</span></div>
+        <div class="file-row"><span class="file-name">models/signal_model.pkl</span><span class="file-desc">Current deployed LightGBM model.</span></div>
+        <div class="file-row"><span class="file-name">models/signal_model_vN.pkl</span><span class="file-desc">Versioned model history (last 3 kept).</span></div>
+        <div class="file-row"><span class="file-name">models/training_history.json</span><span class="file-desc">All training runs: AUC, sample count, tuned hyperparameters, precision/recall per fold.</span></div>
+        <div class="file-row"><span class="file-name">tr-agent.log</span><span class="file-desc">Agent logs. Rotates at 10 MB (3 backups).</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Journal schema -->
+  <section>
+    <div class="section-label">Journal Schema (SQLite)</div>
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h3 style="margin-bottom:8px">cycle_events</h3>
+        <p style="font-size:0.85rem;">Every decision step logged in real time.</p>
+        <table style="margin-top:10px">
+          <thead><tr><th>Column</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">ts</td><td>ISO timestamp</td></tr>
+            <tr><td class="mono">ticker</td><td>e.g. NVDA</td></tr>
+            <tr><td class="mono">event_type</td><td>signal · risk · llm_decision · order</td></tr>
+            <tr><td class="mono">data</td><td>JSON blob (rsi, macd_hist, reasoning, ml_features…)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:8px">trade_outcomes</h3>
+        <p style="font-size:0.85rem;">One row per closed trade. Used for ML training and analytics.</p>
+        <table style="margin-top:10px">
+          <thead><tr><th>Column</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">ticker</td><td>e.g. AAPL</td></tr>
+            <tr><td class="mono">buy_ts / sell_ts</td><td>Entry and exit timestamps</td></tr>
+            <tr><td class="mono">buy_price / sell_price</td><td>Execution prices</td></tr>
+            <tr><td class="mono">pnl / pnl_pct</td><td>Dollar and % return</td></tr>
+            <tr><td class="mono">sell_reasoning</td><td>LLM reasoning or "stop-loss"</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- Stack -->
+  <section>
+    <div class="section-label">Technology Stack</div>
+    <div class="stack-grid">
+      <div class="stack-item"><div class="layer">LLM runtime</div><div class="tech">Ollama · qwen2.5:7b</div></div>
+      <div class="stack-item"><div class="layer">ML model</div><div class="tech">LightGBM + SHAP</div></div>
+      <div class="stack-item"><div class="layer">Scheduling</div><div class="tech">APScheduler</div></div>
+      <div class="stack-item"><div class="layer">Process mgmt</div><div class="tech">supervisord</div></div>
+      <div class="stack-item"><div class="layer">Market data</div><div class="tech">yfinance</div></div>
+      <div class="stack-item"><div class="layer">Indicators</div><div class="tech">ta library</div></div>
+      <div class="stack-item"><div class="layer">Journal</div><div class="tech">SQLite</div></div>
+      <div class="stack-item"><div class="layer">Config</div><div class="tech">pydantic-settings</div></div>
+      <div class="stack-item"><div class="layer">CLI</div><div class="tech">Typer + Rich</div></div>
+      <div class="stack-item"><div class="layer">Notifications</div><div class="tech">Telegram Bot API</div></div>
+    </div>
+  </section>
+
+  <!-- CLI reference -->
+  <section>
+    <div class="section-label">Key CLI Commands</div>
+    <div class="card">
+      <table>
+        <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">./agent.sh start</td><td>Start supervisord + agent (auto-restarts on crash)</td></tr>
+          <tr><td class="mono">./agent.sh stop</td><td>Pause the agent (supervisord stays up)</td></tr>
+          <tr><td class="mono">./agent.sh restart</td><td>Restart after code or config change</td></tr>
+          <tr><td class="mono">./agent.sh logs</td><td>Tail live logs</td></tr>
+          <tr><td class="mono">./agent.sh shutdown</td><td>Stop everything including supervisord</td></tr>
+          <tr><td class="mono">uv run python -m tr_agent.main ml bootstrap</td><td>Train initial ML model from 2y history</td></tr>
+          <tr><td class="mono">uv run python -m tr_agent.main ml status</td><td>Show model version, AUC, training date</td></tr>
+          <tr><td class="mono">uv run python -m tr_agent.main ml analyze</td><td>Run weekly analysis manually</td></tr>
+          <tr><td class="mono">uv run python -m tr_agent.main screen</td><td>Run screener, save today's watchlist</td></tr>
+          <tr><td class="mono">uv run python -m tr_agent.main trade</td><td>Run one trading cycle on all watchlist tickers</td></tr>
+          <tr><td class="mono">uv run python -m tr_agent.main portfolio</td><td>Show current paper portfolio</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- Glossary -->
+  <section>
+    <div class="section-label">Glossary — Key Concepts</div>
+
+    <div class="card-grid card-grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3 class="c-accent" style="margin-bottom:10px">Ticker</h3>
+        <p style="font-size:0.88rem; color:var(--text);">A short code that uniquely identifies a publicly traded company on the stock market.</p>
+        <div class="chips" style="margin-top:10px">
+          <div class="chip">AAPL <span>Apple</span></div>
+          <div class="chip">NVDA <span>Nvidia</span></div>
+          <div class="chip">GOOGL <span>Google</span></div>
+          <div class="chip">META <span>Meta</span></div>
+        </div>
+        <p style="font-size:0.82rem; margin-top:10px;">Every company in the 48-ticker candidate pool is referenced by its ticker throughout the codebase, journal, and Telegram alerts.</p>
+      </div>
+
+      <div class="card">
+        <h3 class="c-accent" style="margin-bottom:10px">SPY</h3>
+        <p style="font-size:0.88rem; color:var(--text);">A special ticker that tracks the S&amp;P 500 — a basket of the 500 largest US companies. It moves with the overall US stock market.</p>
+        <p style="font-size:0.82rem; margin-top:8px;">Used in two ways in this agent:</p>
+        <div class="stage-rule" style="margin-top:8px"><div class="dot"></div><p style="font-size:0.85rem;"><strong>Regime filter:</strong> if SPY SMA50 &lt; SMA200 (death cross), the whole market is in a downtrend — BUY signals are suppressed.</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;"><strong>ML features:</strong> <span class="mono">rel_roc_5</span> measures if a stock is outperforming the market; <span class="mono">spy_corr_60</span> measures how closely it moves with SPY.</p></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3 class="c-accent" style="margin-bottom:14px">OHLCV — What a Day of Stock Data Looks Like</h3>
+      <p style="font-size:0.85rem; color:var(--muted); margin-bottom:14px;">For every ticker, yfinance returns 365 rows of this — one per trading day over the past year. All indicators are computed from these numbers.</p>
+      <table>
+        <thead><tr><th>Letter</th><th>Meaning</th><th>Example (AAPL)</th></tr></thead>
+        <tbody>
+          <tr><td><strong>O — Open</strong></td><td>Price when the market opened (9:30 AM)</td><td class="mono c-text">$180.00</td></tr>
+          <tr><td><strong>H — High</strong></td><td>Highest price reached that day</td><td class="mono c-green">$183.50</td></tr>
+          <tr><td><strong>L — Low</strong></td><td>Lowest price reached that day</td><td class="mono c-red">$178.20</td></tr>
+          <tr><td><strong>C — Close</strong></td><td>Price when the market closed (4:00 PM)</td><td class="mono c-text">$182.10</td></tr>
+          <tr><td><strong>V — Volume</strong></td><td>Number of shares traded that day</td><td class="mono">55,000,000</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h3 class="c-accent" style="margin-bottom:14px">Indicators — Reading the Market's Signals</h3>
+      <p style="font-size:0.85rem; color:var(--muted); margin-bottom:14px;">Mathematical formulas applied to OHLCV data to summarize what's happening with a stock's price. They don't predict the future — they describe the current state so the agent can make a rule-based decision.</p>
+      <table>
+        <thead><tr><th>Indicator</th><th>What it measures</th><th>How we use it</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>RSI</strong><br><span style="font-size:0.75rem; color:var(--muted)">Relative Strength Index</span></td>
+            <td>Is the stock overbought or oversold? Scale 0–100.</td>
+            <td>BUY signal when RSI &lt; 30 (oversold). SELL when RSI &gt; 70 (overbought).</td>
+          </tr>
+          <tr>
+            <td><strong>MACD</strong><br><span style="font-size:0.75rem; color:var(--muted)">Moving Avg Convergence Divergence</span></td>
+            <td>Is momentum building upward or downward?</td>
+            <td>MACD histogram &gt; 0 = upward momentum → contributes to BUY signal.</td>
+          </tr>
+          <tr>
+            <td><strong>SMA 20/50/200</strong><br><span style="font-size:0.75rem; color:var(--muted)">Simple Moving Average</span></td>
+            <td>Average closing price over the last N days. Smooths out noise.</td>
+            <td>SMA20 &gt; SMA50 = short-term uptrend → BUY. SMA200 shows the long-term trend.</td>
+          </tr>
+          <tr>
+            <td><strong>ATR</strong><br><span style="font-size:0.75rem; color:var(--muted)">Average True Range</span></td>
+            <td>How much does the price typically move per day? Measures volatility.</td>
+            <td>ML feature: <span class="mono">atr_pct</span> = ATR / price. High ATR = volatile stock.</td>
+          </tr>
+          <tr>
+            <td><strong>Bollinger Bands</strong></td>
+            <td>A band around the average price. Is the stock near the top or bottom of its normal range?</td>
+            <td>ML features: <span class="mono">bb_position</span> (where in the band) and <span class="mono">bb_width</span> (how wide = how volatile).</td>
+          </tr>
+          <tr>
+            <td><strong>ADX</strong><br><span style="font-size:0.75rem; color:var(--muted)">Average Directional Index</span></td>
+            <td>Is the stock trending strongly or drifting sideways? Scale 0–100.</td>
+            <td>Screener adds +1.0 score when ADX &gt; 25 (strong trend). Low ADX = choppy, unreliable signals.</td>
+          </tr>
+          <tr>
+            <td><strong>ROC</strong><br><span style="font-size:0.75rem; color:var(--muted)">Rate of Change</span></td>
+            <td>How much has the price changed over the last 5/10/20 days? In percent.</td>
+            <td>ML features. Combined with SPY ROC to compute <span class="mono">rel_roc_5</span> (outperformance vs market).</td>
+          </tr>
+          <tr>
+            <td><strong>Volume ratio</strong></td>
+            <td>Is today's trading volume above or below the 20-day average?</td>
+            <td>Screener adds +1.0 when ratio &gt; 1.2 — unusual volume often precedes a move.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- LightGBM deep dive -->
+  <section>
+    <div class="section-label">LightGBM — Where It Lives &amp; What It Does</div>
+
+    <div class="card-grid card-grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3 style="margin-bottom:10px">What is it?</h3>
+        <p style="font-size:0.88rem; color:var(--text);">LightGBM is a <strong>gradient boosting</strong> algorithm — it builds an ensemble of hundreds of small decision trees, each one learning from the mistakes of the previous ones. The result is a model that can find non-linear patterns across all 16 features simultaneously.</p>
+        <p style="font-size:0.85rem; margin-top:10px;">It outputs a single number: the <strong>probability (0–1) that a trade right now will be profitable</strong>. We call this <span class="mono">ml_confidence</span>.</p>
+        <p style="font-size:0.85rem; margin-top:10px;">Example: RSI = 28 alone is a BUY signal. But if ADX is low (sideways market) and volume is weak and SPY is dropping, LightGBM might output 0.32 — "this setup historically loses money." The LLM sees that warning and may reject the trade.</p>
+      </div>
+
+      <div class="card">
+        <h3 style="margin-bottom:10px">Where it runs</h3>
+        <div class="file-list">
+          <div class="file-row">
+            <span class="file-name" style="min-width:180px">data/models/<br>signal_model.pkl</span>
+            <span class="file-desc">The trained model saved to disk. Loaded once at startup, used every cycle.</span>
+          </div>
+          <div class="file-row" style="margin-top:10px">
+            <span class="file-name" style="min-width:180px">signals/technical.py<br><span class="mono" style="font-size:0.75rem">_enrich_with_ml()</span></span>
+            <span class="file-desc">Called at the end of Stage 1. Takes the 16 computed features, feeds them to the model, attaches <span class="mono">ml_confidence</span> to the signal.</span>
+          </div>
+        </div>
+        <div class="gate" style="margin-top:14px">
+          <span class="gate-icon">⚡</span>
+          <span style="font-size:0.82rem;">Runs in &lt;1ms per ticker — fast enough to score all 48 tickers during the pre-market screener without noticeable delay.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:14px">The Full Journey of ml_confidence</h3>
+      <table>
+        <thead><tr><th>Step</th><th>Where</th><th>How ml_confidence is used</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>1. Computed</strong></td>
+            <td class="mono">signals/technical.py</td>
+            <td>16 features from today's OHLCV → LightGBM → probability 0.0–1.0 attached to the signal.</td>
+          </tr>
+          <tr>
+            <td><strong>2. Screener scoring</strong></td>
+            <td class="mono">screener.py</td>
+            <td>+1.0 score if &gt; 55%, −0.5 if &lt; 40%. Helps rank which of the 48 tickers to put in today's watchlist.</td>
+          </tr>
+          <tr>
+            <td><strong>3. LLM prompt</strong></td>
+            <td class="mono">agent/prompts.py</td>
+            <td>Shown as "ML model supports trade" / "ML model warns against trade" so the LLM can weigh it. LLM makes the final call — ML is advisory, not a veto.</td>
+          </tr>
+          <tr>
+            <td><strong>4. Journal</strong></td>
+            <td class="mono">journal.db</td>
+            <td>Logged alongside every signal so the weekly analysis can measure whether high-confidence calls actually won more often.</td>
+          </tr>
+          <tr>
+            <td><strong>5. Retraining</strong></td>
+            <td class="mono">ml/trainer.py</td>
+            <td>As paper trades close with real P&amp;L, new labeled rows are added to the training set. The model retrains on its own mistakes automatically.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- Data freshness -->
+  <section>
+    <div class="section-label">Data Freshness — What Updates When</div>
+    <div class="card" style="margin-bottom:16px">
+      <p style="font-size:0.88rem; color:var(--text); margin-bottom:12px;">
+        Not everything updates at the same frequency. Understanding this is key to knowing when the agent's decisions are reliable.
+      </p>
+      <table>
+        <thead><tr><th>Data</th><th>Updates every cycle?</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>RSI, MACD, SMA20, SMA50</strong><br><span style="font-size:0.75rem;color:var(--muted)">signal indicators</span></td>
+            <td><span class="c-green">Yes — 15-min intraday bars</span></td>
+            <td>Reflects what the stock is doing <em>right now</em> during the session. Falls back to daily if market is closed.</td>
+          </tr>
+          <tr>
+            <td><strong>SMA200</strong><br><span style="font-size:0.75rem;color:var(--muted)">long-term trend</span></td>
+            <td><span class="c-yellow">No — yesterday's daily close</span></td>
+            <td>200-day average changes very slowly. Daily resolution is fine.</td>
+          </tr>
+          <tr>
+            <td><strong>ML features</strong> (ATR, Bollinger, ADX, SPY correlation…)</td>
+            <td><span class="c-yellow">No — yesterday's daily close</span></td>
+            <td>These features need 1 year of history — intraday data doesn't go back far enough.</td>
+          </tr>
+          <tr>
+            <td><strong>Live price</strong> (for stop-loss &amp; execution)</td>
+            <td><span class="c-green">Yes — fetched live each cycle</span></td>
+            <td>Stop-loss checks and order fills use the real current price, not yesterday's close.</td>
+          </tr>
+          <tr>
+            <td><strong>Portfolio state</strong></td>
+            <td><span class="c-green">Yes — reflects current positions</span></td>
+            <td>The agent always knows what it currently holds.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="gate" style="margin-top:14px">
+        <span class="gate-icon">💡</span>
+        <span style="font-size:0.83rem;">The 30-min cycle is most useful on the <strong>exit side</strong>: catching stop-losses and re-evaluating SELL signals. Entries are now also timely thanks to intraday indicators.</span>
+      </div>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- Stop-loss expert view -->
+  <section>
+    <div class="section-label">Stop-Loss — The Expert View</div>
+    <div class="card-grid card-grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3 style="margin-bottom:10px">Do professionals use stop-losses?</h3>
+        <p style="font-size:0.88rem; color:var(--text);">Yes — but not <em>fixed % stops</em>. A 5% stop on NVDA (which routinely moves 3–4% in a normal day) barely clears the noise. You get stopped out right before the recovery.</p>
+        <p style="font-size:0.85rem; margin-top:10px;">What experts avoid is the fixed number, not the concept. The professional approach is to make the threshold <strong>adapt to each stock's volatility</strong>.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:10px">Three professional approaches</h3>
+        <div class="stage-rule"><div class="dot" style="background:var(--green)"></div><p style="font-size:0.85rem;"><strong class="c-green">ATR-based</strong> (what we use): stop = entry − (2 × ATR). NVDA gets ~8% room, JNJ gets ~1.6%. Automatically calibrated per stock.</p></div>
+        <div class="stage-rule"><div class="dot" style="background:var(--accent)"></div><p style="font-size:0.85rem;"><strong class="c-accent">Trailing stop</strong>: moves up as price rises, never down. Locks in profits while still exiting a reversal. Future improvement.</p></div>
+        <div class="stage-rule"><div class="dot" style="background:var(--muted)"></div><p style="font-size:0.85rem;"><strong>Position sizing</strong>: size positions so small that the worst-case loss is acceptable without needing a stop at all. Used by some quant funds.</p></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:12px">ATR-based stop in practice</h3>
+      <table>
+        <thead><tr><th>Stock</th><th>Typical daily ATR</th><th>Fixed 5% stop</th><th>ATR-based (2×) stop</th><th>Verdict</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>NVDA</strong></td>
+            <td>~3.8%</td>
+            <td class="c-red">5% — barely outside noise</td>
+            <td class="c-green">~7.6% below entry</td>
+            <td>ATR gives real breathing room</td>
+          </tr>
+          <tr>
+            <td><strong>TSLA</strong></td>
+            <td>~4.5%</td>
+            <td class="c-red">5% — will trigger on normal days</td>
+            <td class="c-green">~9% below entry</td>
+            <td>ATR prevents constant stop-hunting</td>
+          </tr>
+          <tr>
+            <td><strong>JNJ</strong></td>
+            <td>~0.7%</td>
+            <td class="c-yellow">5% — too loose, slow to protect</td>
+            <td class="c-green">~1.4% below entry</td>
+            <td>ATR exits quickly on a real move</td>
+          </tr>
+          <tr>
+            <td><strong>AAPL</strong></td>
+            <td>~1.5%</td>
+            <td class="c-yellow">5% — somewhat reasonable</td>
+            <td class="c-green">~3% below entry</td>
+            <td>ATR still tighter and more accurate</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:0.82rem; margin-top:10px; color:var(--muted);">The ATR-based stop_price is computed when a BUY fills and stored on the position. Stage 0 checks it each cycle. Positions opened before this change fall back to the old fixed 5% rule automatically.</p>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- LLM Learning -->
+  <section>
+    <div class="section-label">LLM Feedback Rules — How the Agent Learns</div>
+    <div class="card-grid card-grid-2" style="margin-bottom:16px">
+      <div class="card">
+        <h3 style="margin-bottom:10px">The problem</h3>
+        <p style="font-size:0.88rem; color:var(--text);">The LLM (qwen2.5:7b) is a static model — it can't be fine-tuned locally. Without feedback, it makes each decision from scratch and repeats the same types of mistakes week after week.</p>
+        <p style="font-size:0.85rem; margin-top:8px;">Example: if TSLA BUY signals have a 28% win rate over 30 days, the LLM doesn't know that. It evaluates each TSLA signal as if it were the first one.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:10px">The solution</h3>
+        <p style="font-size:0.88rem; color:var(--text);">Every Sunday, the weekly analysis job now writes <span class="mono">data/llm_rules.md</span> — a structured rules file synthesized by Ollama from the last 30 days of trade outcomes. Every future Stage 3 confirmation reads this file and applies the rules.</p>
+        <div class="stage-rule" style="margin-top:10px"><div class="dot" style="background:var(--green)"></div><p style="font-size:0.85rem;">The LLM now knows: "TSLA BUY signals historically lose — require higher confidence."</p></div>
+        <div class="stage-rule"><div class="dot" style="background:var(--green)"></div><p style="font-size:0.85rem;">You can also edit the file manually between Sundays — your edits survive until the next regeneration.</p></div>
+      </div>
+    </div>
+    <div class="card">
+      <h3 style="margin-bottom:10px">Rules file format (<span class="mono" style="font-size:0.85rem">data/llm_rules.md</span>)</h3>
+      <pre style="background:var(--bg3); border-radius:8px; padding:14px; font-size:0.8rem; color:var(--text); overflow-x:auto; margin-top:8px;">## Learned Rules (generated 2026-05-18 · 47 trades · 30-day window)
+
+### What's working:
+- RSI &lt; 30 entries: 68% win rate vs 41% for RSI 30-35 — prefer tight RSI thresholds
+- NVDA: 71% win rate across 7 trades — trust signals more than average
+
+### What to avoid:
+- TSLA: 28% win rate (2/7) — require higher ML confidence before confirming BUY
+- Stop-loss triggered 3× this period (avg -4.2%) — reduce size in volatile conditions
+
+### Suggested constraints:
+- Require ML confidence &gt; 55% when ticker win rate &lt; 40%
+- Be more conservative when stop-loss exit rate &gt; 40% in recent period</pre>
+    </div>
+  </section>
+
+  <hr>
+
+  <!-- News injection -->
+  <section>
+    <div class="section-label">News Injection — Qualitative Context for the LLM</div>
+    <div class="card-grid card-grid-2">
+      <div class="card">
+        <h3 style="margin-bottom:10px">What and why</h3>
+        <p style="font-size:0.88rem; color:var(--text);">Technical indicators are purely numeric — they can't detect that NVDA just had an earnings miss, or that a regulatory investigation was announced this morning. News headlines fill that gap.</p>
+        <p style="font-size:0.85rem; margin-top:8px;">Before each Stage 3 LLM confirmation, the agent fetches the 2–3 most recent headlines for that ticker (last 48h) via yfinance and injects them into the prompt.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:10px">How it works</h3>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;"><strong>Source:</strong> <span class="mono">yf.Ticker(ticker).news</span> — free, no API key, already a dependency.</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;"><strong>Filter:</strong> only articles published in the last 48 hours.</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;"><strong>Cache:</strong> one fetch per ticker per day — screener runs 48 tickers without redundant requests.</p></div>
+        <div class="stage-rule"><div class="dot"></div><p style="font-size:0.85rem;"><strong>Limit:</strong> max 3 headlines to protect the model's context window.</p></div>
+        <div class="gate" style="margin-top:10px">
+          <span class="gate-icon">📰</span>
+          <span style="font-size:0.82rem;">If no recent news exists → section omitted from prompt. Failures are silent — never blocks a trade.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div style="color:var(--muted); font-size:0.8rem; text-align:center; margin-top:32px;">tr-agent v0.7 · paper trading · local only</div>
+
+</div>
+</body>
+</html>

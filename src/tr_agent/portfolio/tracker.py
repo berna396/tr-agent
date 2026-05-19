@@ -24,7 +24,7 @@ class PortfolioTracker:
         self._orders: list[Order] = []
         self._trade_log: list[TradeRecord] = []
 
-    def execute(self, order: Order) -> None:
+    def execute(self, order: Order, stop_price: Optional[float] = None) -> None:
         """Aplica una orden completada al estado del portfolio."""
         if order.fill_price is None:
             raise ValueError(f"La orden {order.order_id} no tiene fill_price")
@@ -41,10 +41,12 @@ class PortfolioTracker:
                 pos = self._positions[order.ticker]
                 total_qty = pos.quantity + order.quantity
                 avg_price = (pos.cost_basis + cost) / total_qty
-                self._positions[order.ticker] = Position(order.ticker, total_qty, avg_price)
+                self._positions[order.ticker] = Position(
+                    order.ticker, total_qty, avg_price, stop_price=stop_price
+                )
             else:
                 self._positions[order.ticker] = Position(
-                    order.ticker, order.quantity, order.fill_price
+                    order.ticker, order.quantity, order.fill_price, stop_price=stop_price
                 )
             pnl = None
 
@@ -113,7 +115,11 @@ class PortfolioTracker:
             "cash": self._cash,
             "initial_capital": self._initial_capital,
             "positions": {
-                ticker: {"quantity": pos.quantity, "avg_price": pos.avg_price}
+                ticker: {
+                    "quantity": pos.quantity,
+                    "avg_price": pos.avg_price,
+                    "stop_price": pos.stop_price,
+                }
                 for ticker, pos in self._positions.items()
             },
             "trade_log": [
@@ -139,5 +145,6 @@ class PortfolioTracker:
                 ticker=ticker,
                 quantity=pos_data["quantity"],
                 avg_price=pos_data["avg_price"],
+                stop_price=pos_data.get("stop_price"),
             )
         return tracker

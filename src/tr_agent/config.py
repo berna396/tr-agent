@@ -36,9 +36,10 @@ class Settings(BaseSettings):
     screener_min_avg_volume: int = 500_000
 
     # v0.5 safety guards
-    stop_loss_pct: float = 0.05          # 5% — set to 0 to disable
-    earnings_blackout_days: int = 3      # avoid BUY within N days of earnings
-    regime_filter_enabled: bool = True   # suppress BUY when SPY is bearish
+    stop_loss_pct: float = 0.05               # fallback fixed % stop (used when ATR unavailable)
+    stop_loss_atr_multiplier: float = 2.0     # ATR-based stop: stop_price = entry - mult * ATR(14)
+    earnings_blackout_days: int = 3           # avoid BUY within N days of earnings
+    regime_filter_enabled: bool = True        # suppress BUY when SPY is bearish
 
 
 settings = Settings()

@@ -47,6 +47,7 @@ class PaperBroker(BaseBroker):
         quantity: float,
         order_type: OrderType = OrderType.MARKET,
         limit_price: Optional[float] = None,
+        stop_price: Optional[float] = None,
     ) -> Order:
         quote = self.get_quote(ticker)
 
@@ -65,7 +66,7 @@ class PaperBroker(BaseBroker):
             status="filled",
             timestamp=datetime.now(timezone.utc),
         )
-        self._tracker.execute(order)
+        self._tracker.execute(order, stop_price=stop_price)
         persistence.save(self._tracker, self._state_path)
         return order
 

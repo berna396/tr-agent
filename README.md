@@ -2,7 +2,7 @@
 
 A local AI trading agent that runs entirely on your machine. It scans 48 liquid large-caps every morning, selects the best setups, and paper-trades them throughout the day using a 4-stage pipeline: technical signals → risk check → LLM confirmation → order execution. A LightGBM model runs in the background, learning from every trade and improving its confidence scores over time.
 
-**Status:** v0.6 — paper trading live, ML layer active (16 features, hyperparameter tuning, SPY correlation), regime filter + earnings blackout + stop-loss active.
+**Status:** v0.7 — paper trading live. Intraday signals (15-min bars), ATR-based stop-loss, LLM feedback rules, news injection.
 
 ---
 
@@ -27,13 +27,14 @@ Every trading day the agent runs three types of jobs:
 ```
 Stage 0 — Stop-loss enforcement  (runs before everything else)
   ├── Check every open position against current price
-  ├── If loss ≥ stop_loss_pct (default 5%) → sell immediately, bypass pipeline
+  ├── ATR-based stop: stop_price = entry − (2 × ATR(14)) stored at BUY time
+  ├── Falls back to fixed 5% stop for positions without an ATR stop
   └── Telegram alert · Skip that ticker for the rest of the cycle
 
 Stage 1 — Signal detection  (pure Python, no LLM)
-  ├── Fetch 1 year of daily OHLCV (yfinance)
-  ├── Compute RSI(14), MACD(12/26/9), SMA(20/50/200)
-  ├── Compute 16 ML features: ATR, Bollinger Bands, ROC, ADX, volume ratio, SPY correlation, ...
+  ├── Fetch 1 year of daily OHLCV + 5 days of 15-min intraday bars (yfinance)
+  ├── RSI(14), MACD(12/26/9), SMA(20/50) computed from intraday bars (live during session)
+  ├── SMA(200) and all 16 ML features computed from daily bars (need long history)
   ├── Query LightGBM → ml_confidence (0–1, probability of profitable outcome)
   └── Fire BUY when ≥2 of {RSI<30, MACD hist>0, SMA20>SMA50} · SELL symmetric · else NEUTRAL
 
@@ -48,11 +49,14 @@ Stage 2 — Risk check  (pure Python, no LLM)
 
 Stage 3 — LLM confirmation  (Ollama · qwen2.5:7b)
   ├── Receives: signal + indicators (incl. SMA200) + ML confidence + market regime + portfolio state + trade history
+  ├── + Recent news headlines (last 48h, via yfinance)
+  ├── + Learned rules from data/llm_rules.md (generated weekly by Ollama from past performance)
   ├── Returns JSON: {confirmed, quantity, reasoning}
   └── Conservative by design — rejects anything ambiguous
 
 Stage 4 — Order execution  (PaperBroker)
   ├── Fill at current market price ± 0.1% slippage
+  ├── Compute ATR-based stop_price and store on position
   ├── Persist to data/portfolio_state.json
   ├── Log everything to data/journal.db
   └── Send Telegram notification with P&L summary
@@ -249,6 +253,7 @@ All runtime data lives in `data/` (gitignored — back it up):
 | `models/signal_model.pkl` | Current LightGBM model |
 | `models/signal_model_vN.pkl` | Versioned model history (last 3 kept) |
 | `models/training_history.json` | All training runs with AUC and sample counts |
+| `llm_rules.md` | Auto-generated weekly by Ollama — learned rules injected into every LLM confirmation |
 | `tr-agent.log` | Agent logs |
 
 ### Journal schema
@@ -331,18 +336,24 @@ src/tr_agent/
 - Walk-forward CV now reports precision and recall alongside AUC
 - Model v2: AUC 0.453, tuned params `n_estimators=100, learning_rate=0.01`
 
+### ✅ v0.7 — Smarter decisions (done)
+- **Intraday signals**: RSI, MACD, SMA20/50 now computed from 15-min bars instead of yesterday's daily close; falls back to daily bars outside market hours
+- **ATR-based stop-loss**: stop_price = entry − (2 × ATR(14)) stored per position; adapts to each stock's volatility (NVDA gets ~8% room, JNJ ~1.6%); falls back to fixed 5% for old positions
+- **LLM feedback rules**: weekly analysis uses Ollama to synthesize 30-day performance stats into `data/llm_rules.md`; rules injected into every Stage 3 confirmation prompt so the LLM learns from past mistakes
+- **News injection**: 2–3 recent headlines per ticker (last 48h, via yfinance) injected into Stage 3 prompt; cached per ticker per day
+
 ### v0.4 — Live trading (Trade Republic)
 - Wire up `broker/trade_republic.py` using the `pytr` library
 - Toggle via `PAPER_MODE=false` in `.env`
 - Add fractional share handling and order confirmation flow
 - Risk: start with very small position sizes
 
-### v0.7 — Observability
+### v0.8 — Observability
 - Web dashboard (FastAPI + htmx) showing live portfolio, recent signals, model performance
 - Backtesting CLI: replay journal signals against historical prices to measure strategy performance
 - Alert on model degradation (AUC drops below baseline over rolling 30-day window)
 
-### v0.8 — Advanced ML (needs 200+ closed trades)
+### v0.9 — Advanced ML (needs 200+ closed trades)
 - Retrain with longer lookback and tuned hyperparameters on real P&L-labeled data
 - LSTM on sequences of signals (needs ~500+ trades)
-- RSI entry quality analysis: did buys at RSI < 30 outperform 30–35 entries?
+- Trailing stop-loss: moves up as price rises, never down — locks in profits

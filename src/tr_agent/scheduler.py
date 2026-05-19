@@ -51,45 +51,56 @@ def run_cycle(tickers: list[str] | None = None) -> None:
     log.info(f"[Cycle] Starting — {len(tickers)} tickers: {', '.join(tickers)}")
 
     # Stage 0: Stop-loss enforcement — runs before signal detection
-    if settings.stop_loss_pct > 0:
-        portfolio = broker.get_portfolio()
-        for sl_ticker, position in list(portfolio.positions.items()):
-            try:
-                quote = broker.get_quote(sl_ticker)
-                loss_pct = (quote.price - position.avg_price) / position.avg_price
-                if loss_pct <= -settings.stop_loss_pct:
-                    order = broker.place_order(sl_ticker, OrderSide.SELL, position.quantity)
-                    journal.log_order(
-                        sl_ticker, "sell", order.quantity, order.fill_price, order.order_id
+    portfolio = broker.get_portfolio()
+    for sl_ticker, position in list(portfolio.positions.items()):
+        try:
+            quote = broker.get_quote(sl_ticker)
+            loss_pct = (quote.price - position.avg_price) / position.avg_price
+
+            # ATR-based stop if stored on position; otherwise fall back to fixed %
+            if position.stop_price is not None:
+                triggered = quote.price <= position.stop_price
+                threshold_str = f"stop ${position.stop_price:.2f} (ATR-based)"
+            elif settings.stop_loss_pct > 0:
+                triggered = loss_pct <= -settings.stop_loss_pct
+                threshold_str = f"fixed {settings.stop_loss_pct:.0%}"
+            else:
+                triggered = False
+                threshold_str = ""
+
+            if triggered:
+                order = broker.place_order(sl_ticker, OrderSide.SELL, position.quantity)
+                journal.log_order(
+                    sl_ticker, "sell", order.quantity, order.fill_price, order.order_id
+                )
+                pending = journal.get_pending_buy(sl_ticker)
+                if pending:
+                    journal.record_outcome(
+                        ticker=sl_ticker,
+                        buy_ts=pending["ts"],
+                        sell_ts=datetime.now(ET).isoformat(),
+                        buy_price=pending["fill_price"],
+                        sell_price=order.fill_price,
+                        quantity=order.quantity,
+                        buy_reasoning="",
+                        sell_reasoning=f"stop-loss at {loss_pct:.1%} ({threshold_str})",
                     )
-                    pending = journal.get_pending_buy(sl_ticker)
-                    if pending:
-                        journal.record_outcome(
-                            ticker=sl_ticker,
-                            buy_ts=pending["ts"],
-                            sell_ts=datetime.now(ET).isoformat(),
-                            buy_price=pending["fill_price"],
-                            sell_price=order.fill_price,
-                            quantity=order.quantity,
-                            buy_reasoning="",
-                            sell_reasoning=f"stop-loss at {loss_pct:.1%}",
-                        )
-                    stop_loss_sold.add(sl_ticker)
-                    orders_placed.append({
-                        "ticker": sl_ticker, "side": "sell",
-                        "quantity": order.quantity, "fill_price": order.fill_price,
-                    })
-                    log.warning(
-                        f"[StopLoss] {sl_ticker}: sold {order.quantity:.4f} @ "
-                        f"${order.fill_price:.2f} ({loss_pct:+.1%})"
-                    )
-                    notifier.send(
-                        f"🛑 *Stop-loss* {sl_ticker}\n"
-                        f"Sold {order.quantity:.2f} sh @ ${order.fill_price:.2f} "
-                        f"({loss_pct:+.1%})"
-                    )
-            except Exception as e:
-                log.error(f"[StopLoss] {sl_ticker}: {e}")
+                stop_loss_sold.add(sl_ticker)
+                orders_placed.append({
+                    "ticker": sl_ticker, "side": "sell",
+                    "quantity": order.quantity, "fill_price": order.fill_price,
+                })
+                log.warning(
+                    f"[StopLoss] {sl_ticker}: sold {order.quantity:.4f} @ "
+                    f"${order.fill_price:.2f} ({loss_pct:+.1%}, {threshold_str})"
+                )
+                notifier.send(
+                    f"🛑 *Stop-loss* {sl_ticker}\n"
+                    f"Sold {order.quantity:.2f} sh @ ${order.fill_price:.2f} "
+                    f"({loss_pct:+.1%})"
+                )
+        except Exception as e:
+            log.error(f"[StopLoss] {sl_ticker}: {e}")
 
     # Get market regime once per cycle (single SPY download)
     regime = market_regime.get_regime()
@@ -125,7 +136,7 @@ def run_cycle(tickers: list[str] | None = None) -> None:
             if settings.regime_filter_enabled and not regime.bullish:
                 log.info(
                     f"[Cycle] {ticker}: BUY suppressed — {regime.label} regime "
-                    f"(SPY SMA20={regime.sma20:.0f} < SMA50={regime.sma50:.0f})"
+                    f"(SPY SMA50={regime.sma50:.0f} < SMA200={regime.sma200:.0f})"
                 )
                 continue
 
@@ -165,11 +176,20 @@ def run_cycle(tickers: list[str] | None = None) -> None:
         # Stage 4: Execute
         quantity = min(decision.quantity, risk_check.max_quantity)
         try:
-            order = broker.place_order(ticker, decision.side, quantity)
+            atr_stop: float | None = None
+            if decision.side == OrderSide.BUY:
+                atr_ratio = analysis.ml_features.get("atr_ratio")
+                if atr_ratio and analysis.close:
+                    atr_stop = round(
+                        analysis.close - settings.stop_loss_atr_multiplier * atr_ratio * analysis.close,
+                        4,
+                    )
+            order = broker.place_order(ticker, decision.side, quantity, stop_price=atr_stop)
             journal.log_order(ticker, order.side.value, order.quantity, order.fill_price, order.order_id)
+            stop_str = f" | stop ${atr_stop:.2f}" if atr_stop else ""
             log.info(
                 f"[Cycle] {ticker}: order placed — {order.side.value} "
-                f"{quantity:.4f} @ ${order.fill_price:.2f}"
+                f"{quantity:.4f} @ ${order.fill_price:.2f}{stop_str}"
             )
 
             if order.side.value == "sell":

@@ -41,6 +41,7 @@ class Position:
     ticker: str
     quantity: float
     avg_price: float
+    stop_price: Optional[float] = None  # ATR-based stop; None → fall back to fixed %
 
     @property
     def cost_basis(self) -> float:
