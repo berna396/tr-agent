@@ -1,8 +1,8 @@
 # tr-agent
 
-A local AI trading agent that runs entirely on your machine. It scans 48 liquid large-caps every morning, selects the best setups, and paper-trades them throughout the day using a 4-stage pipeline: technical signals → risk check → LLM confirmation → order execution. A LightGBM model runs in the background, learning from every trade and improving its confidence scores over time.
+A local AI trading agent that runs entirely on your machine. It scans 48 liquid large-caps every morning, selects the best setups, and paper-trades them throughout the day using a 5-stage pipeline: technical signals → news analysis → risk check → LLM confirmation → order execution. A LightGBM model runs in the background, learning from every trade and improving its confidence scores over time.
 
-**Status:** v0.7 — paper trading live. Intraday signals (15-min bars), ATR-based stop-loss, LLM feedback rules, news injection.
+**Status:** v0.8 — paper trading live. Multi-horizon labels, Kelly sizing, news analyst LLM, Slack trade alerts, web dashboard.
 
 ---
 
@@ -15,11 +15,11 @@ Every trading day the agent runs three types of jobs:
               └── If 10+ new closed trades since last training → retrain LightGBM → deploy
 09:15 ET  ─── Pre-market screener
               └── Score 48 large-caps → pick top 12 by signal quality, trend, volume, ML confidence
-              └── Save to data/active_watchlist.json → Telegram: "Today's watchlist: GOOGL, NVDA, ..."
+              └── Save to data/active_watchlist.json
 09:30–16:00 ET  ─── Trading cycle (every 30 min)
-              └── For each stock in today's watchlist → run 4-stage pipeline
+              └── For each stock in today's watchlist → run 5-stage pipeline
 10:00 ET (Sun)  ─── Weekly ML analysis
-              └── 30-day P&L report + SHAP feature analysis → Ollama generates narrative → Telegram
+              └── 30-day P&L report + SHAP feature analysis → Ollama generates narrative
 ```
 
 ### Trading pipeline
@@ -29,28 +29,35 @@ Stage 0 — Stop-loss enforcement  (runs before everything else)
   ├── Check every open position against current price
   ├── ATR-based stop: stop_price = entry − (2 × ATR(14)) stored at BUY time
   ├── Falls back to fixed 5% stop for positions without an ATR stop
-  └── Telegram alert · Skip that ticker for the rest of the cycle
+  └── Slack SELL alert on trigger
 
 Stage 1 — Signal detection  (pure Python, no LLM)
   ├── Fetch 1 year of daily OHLCV + 5 days of 15-min intraday bars (yfinance)
   ├── RSI(14), MACD(12/26/9), SMA(20/50) computed from intraday bars (live during session)
-  ├── SMA(200) and all 16 ML features computed from daily bars (need long history)
+  ├── SMA(200) and all 20 ML features computed from daily bars
   ├── Query LightGBM → ml_confidence (0–1, probability of profitable outcome)
   └── Fire BUY when ≥2 of {RSI<30, MACD hist>0, SMA20>SMA50} · SELL symmetric · else NEUTRAL
 
-Stage 1b — BUY guards  (applied before risk check, BUY signals only)
+Stage 1b — BUY guards  (applied before news analysis, BUY signals only)
   ├── Market regime filter: SPY SMA50 < SMA200 (death cross) → suppress BUY
-  └── Earnings blackout: earnings within 3 days → suppress BUY · fails closed on API error
+  ├── Earnings blackout: earnings within 3 days → suppress BUY · fails closed on API error
+  └── News risk gate: Ollama risk_level="high" AND sentiment < −0.5 → suppress BUY
+
+Stage 1.5 — News analysis  (Ollama · qwen2.5:7b)
+  ├── Receives: ticker + recent headlines + days until earnings
+  ├── Returns structured NewsContext: sentiment_score, risk_level, flags, summary
+  └── NewsContext is passed to Stage 3 as structured context (replaces raw headlines)
 
 Stage 2 — Risk check  (pure Python, no LLM)
-  ├── Max 20% of cash per single trade
-  ├── Max 60% of portfolio invested at once
-  └── SELL requires open position · Rejected → Telegram alert
+  ├── Kelly criterion half-Kelly sizing: f* = (p×b − (1−p)) / b, half-Kelly = f*/2
+  ├── Falls back to fixed 20% of cash when no historical stats available
+  ├── Hard cap: never exceed 20% of cash in a single trade
+  └── Max 60% of portfolio invested at any time
 
 Stage 3 — LLM confirmation  (Ollama · qwen2.5:7b)
-  ├── Receives: signal + indicators (incl. SMA200) + ML confidence + market regime + portfolio state + trade history
-  ├── + Recent news headlines (last 48h, via yfinance)
-  ├── + Learned rules from data/llm_rules.md (generated weekly by Ollama from past performance)
+  ├── Receives: signal + indicators + ML confidence + regime + portfolio state + trade history
+  ├── + Structured NewsContext from Stage 1.5 (risk level, flags, summary)
+  ├── + Learned rules from data/llm_rules.md (generated weekly by Ollama)
   ├── Returns JSON: {confirmed, quantity, reasoning}
   └── Conservative by design — rejects anything ambiguous
 
@@ -59,7 +66,7 @@ Stage 4 — Order execution  (PaperBroker)
   ├── Compute ATR-based stop_price and store on position
   ├── Persist to data/portfolio_state.json
   ├── Log everything to data/journal.db
-  └── Send Telegram notification with P&L summary
+  └── Slack notification: BUY or SELL with % of cash used
 ```
 
 ---
@@ -70,7 +77,7 @@ The ML layer runs alongside the pipeline and improves automatically.
 
 **Model:** LightGBM binary classifier — predicts whether the current market conditions will produce a profitable trade.
 
-**16 features per signal:**
+**20 features per signal:**
 
 | Category | Features |
 |---|---|
@@ -80,10 +87,25 @@ The ML layer runs alongside the pipeline and improves automatically.
 | Volume | Volume / 20-day average volume |
 | Time | Day of week |
 | Market-relative | `rel_roc_5` (ticker ROC5 − SPY ROC5), `spy_corr_60` (60-day return correlation with SPY) |
+| Sentiment | `news_sentiment` (VADER compound score, −1 to 1) |
+| Options flow | `iv_rank` (ATM IV vs 52-week range), `put_call_ratio` (put/call volume ratio) |
+| Short interest | `short_ratio` (days-to-cover) |
 
-**Training:** Bootstrapped from 2 years of historical data (~480 labeled samples). Hyperparameters tuned via `GridSearchCV + TimeSeriesSplit` on every training run. As paper trades close, the model retrains on real P&L outcomes automatically.
+The last 4 features default to 0.0/1.0 in historical bootstrap — live values are injected at trade time and the model learns them over time.
 
-**Deployment gate:** CV AUC must exceed 0.40 (model must show some discrimination vs random). Current model: v2, AUC 0.453, tuned params `n_estimators=100, learning_rate=0.01`.
+**Labels (multi-horizon ensemble):** A sample is labeled positive only if ≥2 of 3 forward return horizons exceed their threshold:
+
+| Horizon | Threshold |
+|---|---|
+| 5 days | ≥ 0.5% |
+| 10 days | ≥ 0.5% |
+| 20 days | ≥ 1.0% |
+
+A whipsaw filter rejects the sample entirely if the 5-day forward drawdown exceeds −3%, even when the net return is positive.
+
+**Training:** Bootstrapped from 2 years of historical data (~485 labeled samples). Hyperparameters tuned via `GridSearchCV + TimeSeriesSplit` on every training run. As paper trades close, the model retrains on real P&L outcomes automatically.
+
+**Deployment gate:** CV AUC must exceed 0.40. Current model: v3, AUC 0.483, 485 samples, 20 features.
 
 **Deployment:** ML confidence is injected into the LLM prompt as context:
 - `> 60%` → "supports trade"
@@ -122,6 +144,47 @@ The selected watchlist is saved to `data/active_watchlist.json`. The trading cyc
 
 ---
 
+## Web dashboard
+
+A Flask dashboard runs on port 8080 (accessible on the local network).
+
+**Features:**
+- Process status (running / stopped) with uptime, start/stop/restart controls
+- Live log streaming via Server-Sent Events
+- Portfolio metrics: cash, total value, return %, open positions with live prices
+- Portfolio equity curve (Chart.js) — reconstructed from trade log; shows cost-basis history with live unrealized P&L at the current point
+- Cycle events feed (signals, risk checks, LLM decisions, orders) from `journal.db`
+- Closed trade history with P&L
+
+```bash
+# Dashboard URL (replace with your machine's IP)
+http://192.168.1.x:8080
+```
+
+---
+
+## Notifications
+
+Only actual trade executions produce a notification — no noise from screener runs, risk rejections, or cycle summaries.
+
+**Slack** (buy/sell only):
+
+```
+🟢 BUY AAPL
+$195.20  ·  8% of cash  (~$800 · 4.1 sh)
+Stop: $185.44  (-5.0%)
+
+🔴 SELL NVDA
+$245.00  ·  9.0 shares
+P&L: +0.18%
+
+🔴 SELL NVDA
+$215.00  ·  9.0 shares  ·  stop-loss
+P&L: -3.0%
+```
+
+---
+
 ## Stack
 
 | Layer | Technology |
@@ -132,10 +195,12 @@ The selected watchlist is saved to `data/active_watchlist.json`. The trading cyc
 | Process management | supervisord |
 | Market data | yfinance |
 | Technical indicators | `ta` library |
+| Sentiment | vaderSentiment (news headlines → compound score) |
 | Trade journal | SQLite (`data/journal.db`) |
 | Config | pydantic-settings + `.env` |
 | CLI | Typer + Rich |
-| Notifications | Telegram Bot API |
+| Web dashboard | Flask + Chart.js (CDN) |
+| Notifications | Slack Incoming Webhooks |
 
 ---
 
@@ -150,12 +215,12 @@ The selected watchlist is saved to `data/active_watchlist.json`. The trading cyc
 # Pull the LLM model
 ollama pull qwen2.5:7b
 
-# Install dependencies (including ML stack)
+# Install dependencies
 uv sync
 
 # Configure
 cp .env.example .env
-# Edit .env — set TELEGRAM_TOKEN and TELEGRAM_CHAT_ID at minimum
+# Edit .env — set SLACK_WEBHOOK_URL at minimum
 ```
 
 ### `.env` reference
@@ -168,8 +233,12 @@ PAPER_MODE=true
 PAPER_INITIAL_CAPITAL=10000.0
 PAPER_SLIPPAGE=0.001
 
-TELEGRAM_TOKEN=<your-bot-token>
-TELEGRAM_CHAT_ID=<your-chat-id>
+# Slack — create at api.slack.com → Your Apps → Incoming Webhooks
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+
+# Telegram (optional, legacy)
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
 
 # Optional — defaults shown
 ML_MIN_NEW_SAMPLES=10
@@ -178,10 +247,15 @@ SCREENER_TOP_N=12
 SCREENER_MIN_PRICE=10.0
 SCREENER_MIN_AVG_VOLUME=500000
 
-# v0.5 safety guards
-STOP_LOSS_PCT=0.05          # 5% drawdown triggers auto-close (set to 0 to disable)
-EARNINGS_BLACKOUT_DAYS=3    # suppress BUY within N days of earnings (set to 0 to disable)
-REGIME_FILTER_ENABLED=true  # suppress BUY when SPY SMA50 < SMA200 (death cross)
+# Safety guards
+STOP_LOSS_PCT=0.05              # 5% drawdown triggers auto-close (0 = disabled)
+STOP_LOSS_ATR_MULTIPLIER=2.0    # ATR-based stop = entry − (mult × ATR14)
+EARNINGS_BLACKOUT_DAYS=3        # suppress BUY within N days of earnings (0 = disabled)
+REGIME_FILTER_ENABLED=true      # suppress BUY when SPY SMA50 < SMA200
+
+# v0.8
+KELLY_SIZING=true               # half-Kelly position sizing when historical stats available
+NEWS_RISK_GATE=true             # block BUY when Ollama rates news risk "high" + sentiment < -0.5
 ```
 
 ### First run
@@ -203,19 +277,20 @@ uv run python -m tr_agent.main scheduler
 ### Production (supervisord)
 
 ```bash
-# Start (launches tr-agent automatically, restarts on crash)
+# Start both tr-agent and the web dashboard
 .venv/bin/supervisord -c supervisord.conf
 
 # Control
-.venv/bin/supervisorctl -c supervisord.conf status
-.venv/bin/supervisorctl -c supervisord.conf restart tr-agent
-.venv/bin/supervisorctl -c supervisord.conf tail -f tr-agent
+./agent.sh status
+./agent.sh restart
+./agent.sh logs
+./agent.sh web-logs
 
 # Stop everything
 .venv/bin/supervisorctl -c supervisord.conf shutdown
 ```
 
-Logs rotate at 10 MB (3 backups) in `data/tr-agent.log`.
+Logs rotate at 10 MB (3 backups) in `data/tr-agent.log` and `data/tr-agent-web.log`.
 
 ---
 
@@ -227,6 +302,7 @@ uv run python -m tr_agent.main trade               # one cycle, all tickers
 uv run python -m tr_agent.main trade --tickers AAPL,GOOGL
 uv run python -m tr_agent.main scheduler           # continuous (30 min intervals)
 uv run python -m tr_agent.main portfolio           # show current paper portfolio
+uv run python -m tr_agent.main web                 # start web dashboard only
 
 # Screener
 uv run python -m tr_agent.main screen              # run screener, save watchlist
@@ -248,13 +324,14 @@ All runtime data lives in `data/` (gitignored — back it up):
 | File | Contents |
 |---|---|
 | `journal.db` | SQLite: every signal, risk check, LLM decision, outcome, P&L |
-| `portfolio_state.json` | Paper portfolio: cash, positions, trade history |
+| `portfolio_state.json` | Paper portfolio: cash, positions, full trade history |
 | `active_watchlist.json` | Today's screener picks (refreshed daily at 9:15 AM ET) |
-| `models/signal_model.pkl` | Current LightGBM model |
+| `models/signal_model.pkl` | Current LightGBM model (20 features) |
 | `models/signal_model_vN.pkl` | Versioned model history (last 3 kept) |
 | `models/training_history.json` | All training runs with AUC and sample counts |
 | `llm_rules.md` | Auto-generated weekly by Ollama — learned rules injected into every LLM confirmation |
 | `tr-agent.log` | Agent logs |
+| `tr-agent-web.log` | Web dashboard logs |
 
 ### Journal schema
 
@@ -262,9 +339,9 @@ All runtime data lives in `data/` (gitignored — back it up):
 -- Every decision step logged
 cycle_events(id, ts, ticker, event_type, data_json)
   event_type: "signal" | "risk" | "llm_decision" | "order"
-  signal data includes: rsi, macd_hist, sma_20, sma_50, close, reasoning, ml_features{}
+  signal data: rsi, macd_hist, sma_20, sma_50, close, reasoning, ml_features{}
 
--- Closed trades for ML training and memory
+-- Closed trades for ML training
 trade_outcomes(id, ticker, buy_ts, sell_ts, buy_price, sell_price, quantity, pnl, pnl_pct)
 ```
 
@@ -274,10 +351,10 @@ trade_outcomes(id, ticker, buy_ts, sell_ts, buy_price, sell_price, quantity, pnl
 
 | Job | Schedule | What it does |
 |---|---|---|
-| `Pre-market screener` | Mon–Fri 9:15 AM ET | Score 48 tickers, pick top 12, Telegram |
-| `Trading cycle` | Mon–Fri 9:30–16:00 ET (every 30 min) | 4-stage pipeline on active watchlist |
 | `ML daily check` | Mon–Fri 9:00 AM ET | Retrain model if ≥10 new live trades |
-| `ML weekly analysis` | Sunday 10:00 AM ET | 30-day P&L + SHAP + Ollama insights → Telegram |
+| `Pre-market screener` | Mon–Fri 9:15 AM ET | Score 48 tickers, pick top 12, save watchlist |
+| `Trading cycle` | Mon–Fri 9:30–16:00 ET (every 30 min) | 5-stage pipeline on active watchlist |
+| `ML weekly analysis` | Sunday 10:00 AM ET | 30-day P&L + SHAP + Ollama insights → `llm_rules.md` |
 
 ---
 
@@ -285,31 +362,35 @@ trade_outcomes(id, ticker, buy_ts, sell_ts, buy_price, sell_price, quantity, pnl
 
 ```
 src/tr_agent/
-├── main.py              CLI entry point (trade, scheduler, portfolio, screen, ml)
+├── main.py              CLI entry point (trade, scheduler, portfolio, screen, ml, web)
 ├── scheduler.py         APScheduler orchestration + refresh_watchlist + run_cycle
 ├── screener.py          Pre-market screener: score and rank candidate pool
 ├── market_regime.py     SPY SMA50/SMA200 golden/death cross regime detection
-├── guards.py            Earnings blackout check (fail-closed on API error)
+├── guards.py            Earnings blackout check + days_until_earnings
 ├── config.py            Pydantic settings from .env
 ├── journal.py           SQLite trade journal (read/write all events)
 ├── memory.py            Build LLM context from historical trade outcomes
-├── risk.py              Risk validator (position sizing rules)
-├── notifier.py          Telegram notifications
+├── risk.py              Risk validator (Kelly sizing + portfolio limits)
+├── notifier.py          Slack trade notifications + Telegram (legacy)
+├── news.py              yfinance headline fetch + VADER sentiment scoring
+├── web.py               Flask dashboard (port 8080): metrics, logs, equity chart
 ├── signals/
-│   ├── technical.py     Technical analysis: fetch OHLCV, compute indicators, derive signal
+│   ├── technical.py     Technical analysis: OHLCV, indicators, signal, 20 ML features
 │   └── rules.py         Rule engine (for backtesting/reference)
 ├── agent/
-│   ├── core.py          LLM confirmation via Ollama (includes regime context)
-│   └── prompts.py       System prompt + ML confidence + regime line builders
+│   ├── core.py          LLM trade confirmation via Ollama
+│   ├── news_analyst.py  Ollama news analysis → structured NewsContext
+│   └── prompts.py       Prompt builders (signal, regime, news, ML confidence)
 ├── broker/
 │   ├── paper.py         Paper broker: simulate orders with slippage
-│   └── trade_republic.py  Stub for live trading (v0.4)
+│   └── trade_republic.py  Stub for live trading (future)
 ├── portfolio/
-│   ├── tracker.py       In-memory portfolio state
+│   ├── tracker.py       In-memory portfolio state + equity reconstruction
 │   └── persistence.py   Load/save portfolio_state.json
 └── ml/
-    ├── features.py      16-feature engineering from OHLCV + SPY DataFrame
-    ├── dataset.py       Historical bootstrap + live data from journal
+    ├── features.py      20-feature engineering from OHLCV + SPY DataFrame
+    ├── dataset.py       Multi-horizon labels + whipsaw filter + live data from journal
+    ├── kelly.py         Half-Kelly position sizing from historical win/loss stats
     ├── signal_model.py  LightGBM wrapper (train, predict, save, load)
     ├── trainer.py       Walk-forward CV, deploy gate, training history
     ├── analyzer.py      SHAP importances, performance report, Ollama insights
@@ -318,42 +399,43 @@ src/tr_agent/
 
 ---
 
+## Changelog
+
+### ✅ v0.8 (current)
+- **Multi-horizon labels**: ensemble of 5d/10d/20d forward returns (majority vote) + whipsaw filter; more robust than single-horizon
+- **20 ML features**: added `news_sentiment` (VADER), `iv_rank`, `put_call_ratio`, `short_ratio`; model is v3 (AUC 0.483)
+- **News analyst LLM**: dedicated Ollama call before trade confirmation produces structured `NewsContext`; news risk gate blocks BUY on high-risk negative news
+- **Kelly criterion sizing**: half-Kelly position sizing when ≥10 closed trades available; falls back to fixed 20%
+- **Slack notifications**: buy/sell only — price, % of cash, stop level; no noise
+- **Web dashboard**: port 8080, process control, live SSE logs, real-time portfolio with equity curve chart
+- **Watchlist fix**: trading cycle now reads `active_watchlist.json` each run instead of using the hardcoded default list
+
+### ✅ v0.7
+- Intraday signals: RSI/MACD/SMA from 15-min bars (falls back to daily outside market hours)
+- ATR-based stop-loss stored per position (adapts to each stock's volatility)
+- LLM feedback rules: weekly Ollama analysis synthesises performance into `llm_rules.md`
+- News injection: recent headlines passed to LLM Stage 3
+
+### ✅ v0.6
+- 16 ML features: added `rel_roc_5` (excess return vs SPY) and `spy_corr_60`
+- SPY data cached per session; hyperparameter tuning via `GridSearchCV + TimeSeriesSplit`
+
+### ✅ v0.5
+- RSI thresholds tightened (BUY < 30, SELL > 70)
+- Market regime filter (SPY golden/death cross)
+- Earnings blackout guard (fail-closed)
+- SMA200 in signal and LLM prompt
+- Fixed 5% stop-loss Stage 0
+
+---
+
 ## Roadmap
 
-### ✅ v0.5 — Smarter signals (done)
-- RSI thresholds tightened: BUY < 30 (was 35), SELL > 70 (was 65)
-- Market regime filter: SPY SMA50 < SMA200 (golden/death cross, upgraded from SMA20/SMA50)
-- Earnings blackout: avoids BUY within 3 days of earnings; fails closed on API error
-- SMA200 added to signal analysis and injected into LLM prompt
-- Stop-loss: Stage 0 auto-closes positions that drop ≥5% from entry
-- Screener: returns empty watchlist on quiet days instead of picking neutral noise
+### Live broker
+Interactive Brokers is the recommended next step — official Python SDK (`ib_insync`), EU accounts supported, free paper trading account for testing. Implement as `broker/ibkr.py`, toggle via `PAPER_MODE=false`.
 
-### ✅ v0.6 — Better ML (done)
-- 16-feature vector: added `rel_roc_5` (excess return vs SPY) and `spy_corr_60` (60-day correlation with SPY)
-- SPY data downloaded once per day and shared across all ticker feature computations (cached)
-- Hyperparameter tuning: `GridSearchCV + TimeSeriesSplit` runs on every training call; best params stored in training history
-- Label consistency fix: `_is_buy_signal()` threshold aligned with live signal (RSI < 30)
-- Walk-forward CV now reports precision and recall alongside AUC
-- Model v2: AUC 0.453, tuned params `n_estimators=100, learning_rate=0.01`
+### Backtesting CLI
+Replay `journal.db` signals against historical prices to measure strategy performance without running live cycles.
 
-### ✅ v0.7 — Smarter decisions (done)
-- **Intraday signals**: RSI, MACD, SMA20/50 now computed from 15-min bars instead of yesterday's daily close; falls back to daily bars outside market hours
-- **ATR-based stop-loss**: stop_price = entry − (2 × ATR(14)) stored per position; adapts to each stock's volatility (NVDA gets ~8% room, JNJ ~1.6%); falls back to fixed 5% for old positions
-- **LLM feedback rules**: weekly analysis uses Ollama to synthesize 30-day performance stats into `data/llm_rules.md`; rules injected into every Stage 3 confirmation prompt so the LLM learns from past mistakes
-- **News injection**: 2–3 recent headlines per ticker (last 48h, via yfinance) injected into Stage 3 prompt; cached per ticker per day
-
-### v0.4 — Live trading (Trade Republic)
-- Wire up `broker/trade_republic.py` using the `pytr` library
-- Toggle via `PAPER_MODE=false` in `.env`
-- Add fractional share handling and order confirmation flow
-- Risk: start with very small position sizes
-
-### v0.8 — Observability
-- Web dashboard (FastAPI + htmx) showing live portfolio, recent signals, model performance
-- Backtesting CLI: replay journal signals against historical prices to measure strategy performance
-- Alert on model degradation (AUC drops below baseline over rolling 30-day window)
-
-### v0.9 — Advanced ML (needs 200+ closed trades)
-- Retrain with longer lookback and tuned hyperparameters on real P&L-labeled data
-- LSTM on sequences of signals (needs ~500+ trades)
-- Trailing stop-loss: moves up as price rises, never down — locks in profits
+### Model degradation alerts
+Alert when rolling 30-day AUC drops below the deployment baseline — signals the model needs fresh training data.
