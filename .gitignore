@@ -1,7 +1,6 @@
 .env
 data/portfolio_state.json
 data/*.json
-!data/candidate_pool.json
 data/journal.db
 data/supervisord.log
 data/supervisord.pid

@@ -24,7 +24,12 @@ _EQUITY_FALLBACK = [
 
 
 def load_candidate_pool() -> list[str]:
-    """Load equity + crypto candidates from data/candidate_pool.json."""
+    """
+    Load equity + crypto candidates from data/candidate_pool.json.
+    Seeds the file from defaults on first run so the agent can modify it freely.
+    """
+    if not _POOL_PATH.exists():
+        _seed_candidate_pool()
     try:
         with open(_POOL_PATH) as f:
             data = json.load(f)
@@ -34,6 +39,15 @@ def load_candidate_pool() -> list[str]:
     except Exception as e:
         log.warning(f"[Screener] candidate_pool.json unreadable ({e}) — using fallback")
         return list(_EQUITY_FALLBACK) + list(settings.crypto_watchlist)
+
+
+def _seed_candidate_pool() -> None:
+    """Write the default pool to disk on first run."""
+    save_candidate_pool(
+        equities=list(_EQUITY_FALLBACK),
+        crypto=list(settings.crypto_watchlist),
+    )
+    log.info("[Screener] candidate_pool.json seeded with defaults")
 
 
 def save_candidate_pool(equities: list[str], crypto: list[str]) -> None:
