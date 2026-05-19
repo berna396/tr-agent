@@ -147,4 +147,16 @@ class PortfolioTracker:
                 avg_price=pos_data["avg_price"],
                 stop_price=pos_data.get("stop_price"),
             )
+        for r in data.get("trade_log", []):
+            tracker._trade_log.append(
+                TradeRecord(
+                    order_id=r["order_id"],
+                    ticker=r["ticker"],
+                    side=OrderSide(r["side"]),
+                    quantity=r["quantity"],
+                    fill_price=r["fill_price"],
+                    timestamp=datetime.fromisoformat(r["timestamp"]),
+                    pnl=r.get("pnl"),
+                )
+            )
         return tracker
