@@ -16,6 +16,8 @@ console = Console()
 _DATA_ROOT = Path(__file__).parents[2] / "data"
 _MODEL_PATH = _DATA_ROOT / "models" / "signal_model.pkl"
 _HISTORY_PATH = _DATA_ROOT / "models" / "training_history.json"
+_CRYPTO_MODEL_PATH = _DATA_ROOT / "models" / "crypto_signal_model.pkl"
+_CRYPTO_HISTORY_PATH = _DATA_ROOT / "models" / "crypto_training_history.json"
 _DB_PATH = _DATA_ROOT / "journal.db"
 
 
@@ -127,21 +129,26 @@ def screen(
 def ml_bootstrap(
     tickers: str = typer.Option(",".join(DEFAULT_WATCHLIST), "--tickers", "-t"),
     period: str = typer.Option("2y", "--period", "-p", help="yfinance period (1y, 2y, 5y)"),
+    crypto: bool = typer.Option(False, "--crypto", help="Train the crypto model instead of equity"),
 ):
     """Download historical data, train initial ML model, and report results."""
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     from tr_agent.ml.trainer import train_and_deploy
 
-    ticker_list = [t.strip().upper() for t in tickers.split(",")]
-    console.print(f"\n[bold green]ML Bootstrap[/bold green] | tickers: {', '.join(ticker_list)} | period: {period}\n")
+    model_path = _CRYPTO_MODEL_PATH if crypto else _MODEL_PATH
+    history_path = _CRYPTO_HISTORY_PATH if crypto else _HISTORY_PATH
+    label = "Crypto ML Bootstrap" if crypto else "ML Bootstrap"
 
-    report = train_and_deploy(ticker_list, _DB_PATH, _MODEL_PATH, _HISTORY_PATH, period, force=True)
+    ticker_list = [t.strip().upper() for t in tickers.split(",")]
+    console.print(f"\n[bold green]{label}[/bold green] | tickers: {', '.join(ticker_list)} | period: {period}\n")
+
+    report = train_and_deploy(ticker_list, _DB_PATH, model_path, history_path, period, force=True)
 
     if report.get("deployed"):
         console.print(f"[bold green]Model v{report['version']} trained and deployed[/bold green]")
         console.print(f"  CV AUC:  {report['cv_auc']:.4f}")
         console.print(f"  Samples: {report['n_samples']}")
-        console.print(f"  Path:    {_MODEL_PATH}")
+        console.print(f"  Path:    {model_path}")
     else:
         console.print(f"[yellow]Model not deployed:[/yellow] {report.get('reason', 'unknown')}")
         console.print(f"  Samples available: {report.get('n_samples', 0)}")

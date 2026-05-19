@@ -13,7 +13,7 @@ from tr_agent.agent.news_analyst import analyze_news
 from tr_agent.broker.base import OrderSide
 from tr_agent.broker.paper import PaperBroker
 from tr_agent.config import DEFAULT_WATCHLIST, settings
-from tr_agent.ml.auto_improve import daily_ml_check, weekly_analysis
+from tr_agent.ml.auto_improve import daily_ml_check, daily_ml_check_crypto, weekly_analysis, weekly_analysis_crypto
 from tr_agent.signals import technical
 from tr_agent.signals.technical import Signal
 
@@ -311,6 +311,20 @@ def start(tickers: list[str] | None = None) -> None:
             id="crypto_cycle",
             name="Crypto trading cycle (24/7)",
             misfire_grace_time=300,
+        )
+        scheduler.add_job(
+            daily_ml_check_crypto,
+            CronTrigger(hour="6,18", minute=0),  # twice daily since 24/7 market
+            id="crypto_ml_daily_check",
+            name="Crypto ML daily retrain check",
+            misfire_grace_time=600,
+        )
+        scheduler.add_job(
+            weekly_analysis_crypto,
+            CronTrigger(day_of_week="mon", hour=8, minute=0, timezone=ET),
+            id="crypto_ml_weekly_analysis",
+            name="Crypto ML weekly analysis",
+            misfire_grace_time=3600,
         )
 
     active = screener.load_active_watchlist(_WATCHLIST_PATH)

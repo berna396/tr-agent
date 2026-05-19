@@ -220,6 +220,7 @@ def _enrich_with_ml(df, ticker: str = "", headlines: list | None = None) -> tupl
     """Compute ML feature vector and model confidence. Never raises."""
     try:
         from pathlib import Path
+        from tr_agent.assets import is_crypto
         from tr_agent.ml.features import compute_last_row
         from tr_agent.ml.signal_model import SignalModel
 
@@ -235,7 +236,8 @@ def _enrich_with_ml(df, ticker: str = "", headlines: list | None = None) -> tupl
             f"short_ratio={alt['short_ratio']:.1f}"
         )
 
-        model_path = Path(__file__).parents[3] / "data" / "models" / "signal_model.pkl"
+        model_name = "crypto_signal_model.pkl" if is_crypto(ticker) else "signal_model.pkl"
+        model_path = Path(__file__).parents[3] / "data" / "models" / model_name
         model = SignalModel.load(model_path)
         if model is None:
             return None, False, ml_feats

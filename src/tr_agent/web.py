@@ -67,6 +67,7 @@ def api_status():
         "pid": pid,
         "uptime": uptime,
         "market_open": market_open(),
+        "crypto_active": True,
         "server_time_et": datetime.now(ET).strftime("%H:%M:%S ET"),
     })
 
@@ -459,11 +460,11 @@ async function fetchStatus() {
       text.className = 'text-sm font-medium text-amber-400';
     }
     if (d.market_open) {
-      mkt.textContent = '● Market open';
+      mkt.textContent = '● NYSE open · ₿ 24/7';
       mkt.className = 'px-2 py-0.5 rounded-full bg-emerald-900 text-emerald-400 text-xs';
     } else {
-      mkt.textContent = '○ Market closed';
-      mkt.className = 'px-2 py-0.5 rounded-full bg-slate-700 text-slate-400 text-xs';
+      mkt.textContent = '○ NYSE closed · ₿ 24/7';
+      mkt.className = 'px-2 py-0.5 rounded-full bg-slate-700 text-amber-400 text-xs';
     }
   } catch(e) {}
 }
@@ -496,8 +497,11 @@ async function fetchPortfolio() {
           <th class="text-right pb-2 font-medium">P&amp;L</th>
         </tr></thead>
         <tbody>
-        ${d.positions.map(p => `<tr class="border-b border-slate-700/50">
-          <td class="font-semibold py-2 text-white">${p.ticker}</td>
+        ${d.positions.map(p => {
+          const isCrypto = p.ticker.includes('-USD') || p.ticker.includes('-USDT') || p.ticker.includes('-BTC') || p.ticker.includes('-ETH');
+          const cryptoBadge = isCrypto ? '<span class="ml-1 text-xs text-amber-400 font-normal">₿</span>' : '';
+          return `<tr class="border-b border-slate-700/50">
+          <td class="font-semibold py-2 text-white">${p.ticker}${cryptoBadge}</td>
           <td class="text-right text-slate-300 py-2">${p.quantity}</td>
           <td class="text-right text-slate-300 py-2">$${p.avg_price}</td>
           <td class="text-right text-slate-300 py-2">$${p.current_price}</td>
@@ -505,7 +509,7 @@ async function fetchPortfolio() {
           <td class="text-right py-2 font-medium ${p.pnl_pct >= 0 ? 'text-emerald-400' : 'text-rose-400'}">
             ${sign(p.pnl_pct)}%
           </td>
-        </tr>`).join('')}
+        </tr>`;}).join('')}
         </tbody></table>`;
     }
   } catch(e) {}

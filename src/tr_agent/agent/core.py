@@ -14,6 +14,7 @@ from tr_agent.risk import RiskCheck
 from tr_agent.signals.technical import TechnicalAnalysis
 
 _RULES_PATH = Path(__file__).parents[3] / "data" / "llm_rules.md"
+_CRYPTO_RULES_PATH = Path(__file__).parents[3] / "data" / "crypto_llm_rules.md"
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +46,9 @@ def confirm_trade(
         **({"path": journal_path} if journal_path else {}),
     )
 
-    learned_rules = rules_section(_RULES_PATH)
+    from tr_agent.assets import is_crypto
+    rules_path = _CRYPTO_RULES_PATH if is_crypto(analysis.ticker) else _RULES_PATH
+    learned_rules = rules_section(rules_path)
 
     sma200_str = f" | SMA200: {analysis.sma_200:.2f}" if analysis.sma_200 is not None else ""
     if analysis.sma_200 is not None:

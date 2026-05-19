@@ -36,8 +36,8 @@ def compute_shap_importances(model: SignalModel, X: pd.DataFrame) -> dict[str, f
         return {}
 
 
-def build_performance_report(db_path: Path, days: int = 30) -> dict:
-    """Aggregate trade outcomes from the last N days."""
+def build_performance_report(db_path: Path, days: int = 30, tickers: list[str] | None = None) -> dict:
+    """Aggregate trade outcomes from the last N days, optionally scoped to specific tickers."""
     db_path = Path(db_path)
     if not db_path.exists():
         return {"error": "no journal data yet", "days": days}
@@ -46,12 +46,26 @@ def build_performance_report(db_path: Path, days: int = 30) -> dict:
 
     with sqlite3.connect(db_path) as con:
         con.row_factory = sqlite3.Row
-        rows = con.execute(
-            "SELECT * FROM trade_outcomes WHERE sell_ts >= ?", (cutoff,)
-        ).fetchall()
-        signal_rows = con.execute(
-            "SELECT ts, ticker, data FROM cycle_events WHERE event_type='signal'"
-        ).fetchall()
+        if tickers:
+            placeholders = ",".join("?" * len(tickers))
+            rows = con.execute(
+                f"SELECT * FROM trade_outcomes WHERE sell_ts >= ? AND ticker IN ({placeholders})",
+                (cutoff, *tickers),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT * FROM trade_outcomes WHERE sell_ts >= ?", (cutoff,)
+            ).fetchall()
+        if tickers:
+            placeholders2 = ",".join("?" * len(tickers))
+            signal_rows = con.execute(
+                f"SELECT ts, ticker, data FROM cycle_events WHERE event_type='signal' AND ticker IN ({placeholders2})",
+                tickers,
+            ).fetchall()
+        else:
+            signal_rows = con.execute(
+                "SELECT ts, ticker, data FROM cycle_events WHERE event_type='signal'"
+            ).fetchall()
 
     if not rows:
         return {"total_trades": 0, "days": days, "message": "no completed trades in window"}
