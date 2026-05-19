@@ -181,6 +181,98 @@ def api_trades():
         return jsonify({"error": str(e)})
 
 
+@app.get("/api/equity")
+def api_equity():
+    """
+    Reconstruct portfolio equity curve from the trade log.
+
+    Each data point represents the portfolio value immediately after an order:
+      value = cash_after_order + sum(position.quantity * position.avg_price)
+    i.e. open positions are marked at cost (no unrealized P&L) except at the
+    final "current" point where live prices are used.
+    """
+    try:
+        with open(PORTFOLIO_PATH) as f:
+            state = json.load(f)
+    except FileNotFoundError:
+        return jsonify({"initial": 10_000.0, "points": []})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+    initial = state.get("initial_capital", 10_000.0)
+    trade_log = state.get("trade_log", [])
+
+    # Sort chronologically
+    trades_sorted = sorted(trade_log, key=lambda t: t.get("timestamp", ""))
+
+    # Simulate cash + cost_basis after each order
+    cash = initial
+    positions: dict[str, dict] = {}  # ticker -> {quantity, avg_price}
+
+    points: list[dict] = []
+
+    for t in trades_sorted:
+        side = t.get("side", "")
+        ticker = t.get("ticker", "")
+        qty = t.get("quantity", 0.0)
+        price = t.get("fill_price", 0.0)
+        ts = t.get("timestamp", "")[:10]  # YYYY-MM-DD
+
+        if side == "buy":
+            cash -= qty * price
+            if ticker in positions:
+                old = positions[ticker]
+                total_qty = old["quantity"] + qty
+                avg = (old["quantity"] * old["avg_price"] + qty * price) / total_qty
+                positions[ticker] = {"quantity": total_qty, "avg_price": avg}
+            else:
+                positions[ticker] = {"quantity": qty, "avg_price": price}
+        elif side == "sell":
+            cash += qty * price
+            if ticker in positions:
+                remaining = positions[ticker]["quantity"] - qty
+                if remaining <= 0:
+                    del positions[ticker]
+                else:
+                    positions[ticker]["quantity"] = remaining
+
+        cost_basis = sum(p["quantity"] * p["avg_price"] for p in positions.values())
+        points.append({"ts": ts, "value": round(cash + cost_basis, 2)})
+
+    # Current point: replace cost_basis with live market values
+    today = datetime.now(ET).strftime("%Y-%m-%d")
+    current_positions = state.get("positions", {})
+    current_cash = state.get("cash", cash)
+
+    if current_positions:
+        import yfinance as yf
+        mkt_val = 0.0
+        for ticker, pos in current_positions.items():
+            try:
+                live_price = float(yf.Ticker(ticker).fast_info.last_price)
+            except Exception:
+                live_price = pos["avg_price"]
+            mkt_val += pos["quantity"] * live_price
+        current_value = round(current_cash + mkt_val, 2)
+    else:
+        current_value = round(current_cash, 2)
+
+    # Replace last point if same date, otherwise append
+    if points and points[-1]["ts"] == today:
+        points[-1] = {"ts": today, "value": current_value, "current": True}
+    else:
+        points.append({"ts": today, "value": current_value, "current": True})
+
+    # Always prepend the starting point (day before first trade, or today if no trades)
+    if points:
+        first_ts = points[0]["ts"]
+    else:
+        first_ts = today
+    points.insert(0, {"ts": first_ts, "value": initial, "start": True})
+
+    return jsonify({"initial": initial, "points": points})
+
+
 @app.get("/api/logs/stream")
 def api_logs_stream():
     def generate():
@@ -213,6 +305,7 @@ TEMPLATE = r"""<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>tr-agent</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <style>
     body { background: #0f172a; }
     #logs { height: 420px; overflow-y: auto; scroll-behavior: smooth; }
@@ -278,6 +371,17 @@ TEMPLATE = r"""<!DOCTYPE html>
       <div class="bg-slate-800 rounded-xl p-4 border border-slate-700">
         <p class="text-xs text-slate-400 uppercase tracking-wider mb-1">Trades</p>
         <p id="m-trades" class="text-2xl font-bold text-white">—</p>
+      </div>
+    </div>
+
+    <!-- Equity Chart -->
+    <div class="bg-slate-800 rounded-xl border border-slate-700 p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Portfolio Performance</h2>
+        <span id="equity-label" class="text-xs text-slate-500"></span>
+      </div>
+      <div class="relative" style="height:200px">
+        <canvas id="equity-chart"></canvas>
       </div>
     </div>
 
@@ -526,16 +630,124 @@ async function control(action) {
   } catch(e) {}
 }
 
+// ── Equity chart ──────────────────────────────────────────────────────────────
+let equityChart = null;
+
+async function fetchEquity() {
+  try {
+    const d = await fetch('/api/equity').then(r => r.json());
+    if (d.error || !d.points || d.points.length < 2) return;
+
+    const labels  = d.points.map(p => p.ts);
+    const values  = d.points.map(p => p.value);
+    const initial = d.initial;
+    const last    = values[values.length - 1];
+    const gain    = last - initial;
+    const gainPct = (gain / initial * 100).toFixed(2);
+
+    document.getElementById('equity-label').textContent =
+      (gain >= 0 ? '+' : '') + '$' + Math.abs(gain).toFixed(2) +
+      ' (' + (gain >= 0 ? '+' : '') + gainPct + '%) all-time';
+
+    const lineColor = last >= initial ? '#34d399' : '#f87171';
+
+    const canvas = document.getElementById('equity-chart');
+    const ctx = canvas.getContext('2d');
+
+    // Gradient fill
+    const grad = ctx.createLinearGradient(0, 0, 0, 200);
+    grad.addColorStop(0, last >= initial ? 'rgba(52,211,153,0.25)' : 'rgba(248,113,113,0.25)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+
+    // Baseline dataset (dashed line at initial capital)
+    const baseline = labels.map(() => initial);
+
+    const chartData = {
+      labels,
+      datasets: [
+        {
+          data: values,
+          borderColor: lineColor,
+          borderWidth: 2,
+          backgroundColor: grad,
+          fill: true,
+          tension: 0.3,
+          pointRadius: values.map((_, i) => (i === 0 || i === values.length - 1) ? 4 : 2),
+          pointBackgroundColor: lineColor,
+          order: 1,
+        },
+        {
+          data: baseline,
+          borderColor: 'rgba(100,116,139,0.4)',
+          borderWidth: 1,
+          borderDash: [4, 4],
+          backgroundColor: 'transparent',
+          fill: false,
+          pointRadius: 0,
+          tension: 0,
+          order: 2,
+        },
+      ],
+    };
+
+    if (equityChart) {
+      equityChart.data = chartData;
+      equityChart.update('none');
+      return;
+    }
+
+    equityChart = new Chart(ctx, {
+      type: 'line',
+      data: chartData,
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            filter: item => item.datasetIndex === 0,
+            backgroundColor: '#1e293b',
+            borderColor: '#334155',
+            borderWidth: 1,
+            titleColor: '#94a3b8',
+            bodyColor: '#e2e8f0',
+            callbacks: {
+              label: ctx => ' $' + ctx.parsed.y.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}),
+            },
+          },
+        },
+        scales: {
+          x: {
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: { color: '#64748b', maxTicksLimit: 6, font: { size: 11 } },
+          },
+          y: {
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            ticks: {
+              color: '#64748b',
+              font: { size: 11 },
+              callback: v => '$' + v.toLocaleString('en-US', {minimumFractionDigits: 0}),
+            },
+          },
+        },
+      },
+    });
+  } catch(e) {}
+}
+
 // ── Init + polling ────────────────────────────────────────────────────────────
 fetchStatus();
 fetchPortfolio();
 fetchEvents();
 fetchTrades();
+fetchEquity();
 
 setInterval(fetchStatus,    5_000);
 setInterval(fetchPortfolio, 30_000);
 setInterval(fetchEvents,    10_000);
 setInterval(fetchTrades,    30_000);
+setInterval(fetchEquity,    60_000);
 </script>
 </body>
 </html>"""
