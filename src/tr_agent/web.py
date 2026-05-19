@@ -553,7 +553,7 @@ async function fetchEvents() {
     div.innerHTML = events.map(e => `
       <div class="flex items-baseline gap-2 py-1 border-b border-slate-700/50 text-xs">
         <span class="text-slate-500 shrink-0 tabular-nums">${e.ts.slice(11)}</span>
-        <span class="text-blue-400 font-medium shrink-0 w-12">${e.ticker}</span>
+        <span class="text-blue-400 font-medium shrink-0 w-20">${e.ticker}</span>
         <span class="text-slate-500 shrink-0 w-20">${e.type}</span>
         <span class="min-w-0">${eventDetail(e)}</span>
       </div>`).join('');

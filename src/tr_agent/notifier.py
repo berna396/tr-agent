@@ -107,4 +107,7 @@ def send_trade_slack(
             sign = "+" if pnl_pct >= 0 else ""
             lines.append(f"P&L: {sign}{pnl_pct:.2f}%")
 
-    return send_slack("\n".join(lines))
+    message = "\n".join(lines)
+    send_slack(message)
+    send(message)
+    return True
