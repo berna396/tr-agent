@@ -239,7 +239,7 @@ def run_cycle(tickers: list[str] | None = None, regime_ticker: str = "SPY") -> N
         except Exception as e:
             log.error(f"[Cycle] {ticker}: order failed — {e}")
 
-    metrics = broker.get_metrics(tickers)
+    metrics = broker.get_metrics()
     log.info(
         f"[Cycle] Done — {len(orders_placed)} trades executed | "
         f"portfolio ${metrics['total_value']:,.2f} ({metrics['total_return_pct']:+.2f}%)"
